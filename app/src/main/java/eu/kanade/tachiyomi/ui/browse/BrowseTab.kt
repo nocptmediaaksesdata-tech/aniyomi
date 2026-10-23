@@ -63,6 +63,10 @@ data object BrowseTab : Tab {
         switchToTabNumberChannel.trySend(2) // Anime extensions: tab no. 2
     }
 
+    fun showAnimeSources() {
+        switchToTabNumberChannel.trySend(0) // Anime sources: tab no. 0
+    }
+
     @Composable
     override fun Content() {
         val context = LocalContext.current

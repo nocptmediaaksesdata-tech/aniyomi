@@ -61,7 +61,21 @@ sealed interface SyncplayEvent {
     data class ActionNotification(
         val message: String,
     ) : SyncplayEvent
+
+    data class HostAnimeChanged(
+        val meta: WatchPartyAnimeMeta,
+    ) : SyncplayEvent
 }
+
+data class WatchPartyAnimeMeta(
+    val animeTitle: String,
+    val animeUrl: String,
+    val sourceId: Long,
+    val sourceName: String,
+    val episodeName: String,
+    val episodeUrl: String,
+    val episodeNumber: Double,
+) : Serializable
 
 data class WatchPartyConfig(
     val serverHost: String = "syncplay.pl",

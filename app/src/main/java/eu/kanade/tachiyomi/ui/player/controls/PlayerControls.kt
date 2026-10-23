@@ -134,6 +134,7 @@ fun PlayerControls(
     val watchPartyUsers by viewModel.watchPartyUsers.collectAsState()
     val isHost by viewModel.isHost.collectAsState()
     val isHostOnly by viewModel.isHostOnly.collectAsState()
+    val isPlaybackLocked = isWatchPartyConnected && !isHost
 
     val chapters = remember(indexedChapters) {
         indexedChapters.map { it.toSegment() }.toImmutableList()
@@ -403,13 +404,23 @@ fun PlayerControls(
                         duration = duration,
                         readAheadValue = readAhead,
                         onValueChange = {
-                            viewModel.updateSeekPos(it)
-                            viewModel.updateIsSeeking(true)
+                            if (!isPlaybackLocked) {
+                                viewModel.updateSeekPos(it)
+                                viewModel.updateIsSeeking(true)
+                            }
                         },
                         onValueChangeFinished = {
-                            viewModel.updatePlayBackPos(it)
-                            viewModel.updateIsSeeking(false)
-                            viewModel.seekTo(it.toInt(), preciseSeeking)
+                            if (isPlaybackLocked) {
+                                viewModel.playerUpdate.update {
+                                    eu.kanade.tachiyomi.ui.player.PlayerUpdates.ShowText(
+                                        "Hanya Host yang dapat mengubah durasi video",
+                                    )
+                                }
+                            } else {
+                                viewModel.updatePlayBackPos(it)
+                                viewModel.updateIsSeeking(false)
+                                viewModel.seekTo(it.toInt(), preciseSeeking)
+                            }
                         },
                         timersInverted = Pair(false, invertDuration),
                         durationTimerOnCLick = { playerPreferences.invertDuration().set(!invertDuration) },

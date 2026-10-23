@@ -29,6 +29,7 @@ import tachiyomi.domain.watchparty.model.SyncplayEvent
 import tachiyomi.domain.watchparty.model.SyncplayFile
 import tachiyomi.domain.watchparty.model.SyncplayPlayState
 import tachiyomi.domain.watchparty.model.SyncplayUser
+import tachiyomi.domain.watchparty.model.WatchPartyAnimeMeta
 import tachiyomi.domain.watchparty.model.WatchPartyConfig
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -83,6 +84,9 @@ class SyncplayClient {
 
     private val _isHost = MutableStateFlow(false)
     val isHost: StateFlow<Boolean> = _isHost.asStateFlow()
+
+    private val _hostAnimeMeta = MutableStateFlow<WatchPartyAnimeMeta?>(null)
+    val hostAnimeMeta: StateFlow<WatchPartyAnimeMeta?> = _hostAnimeMeta.asStateFlow()
 
     // Last known local play state for ping-pong
     @Volatile
@@ -329,6 +333,9 @@ class SyncplayClient {
                 _events.emit(SyncplayEvent.UserJoined(username))
             }
 
+            // Parse Anime metadata if sent by host
+            parseAndEmitAnimeMeta(fileObj, fileName)
+
             // Check file mismatch with local file
             currentFile.value?.let { localFile ->
                 if (fileName != null && fileName != localFile.name) {
@@ -368,6 +375,9 @@ class SyncplayClient {
                 isHost = isController,
             )
             userMap[username] = user
+
+            // Parse Anime metadata if sent by host
+            parseAndEmitAnimeMeta(fileObj, fileName)
         }
 
         val userList = userMap.values.toList()
@@ -375,6 +385,30 @@ class SyncplayClient {
         _isHost.value = userList.any { it.isHost && it.username == _currentUsername.value } ||
             (userList.firstOrNull()?.username == _currentUsername.value)
         _events.emit(SyncplayEvent.UserListUpdated(userList))
+    }
+
+    private suspend fun parseAndEmitAnimeMeta(fileObj: kotlinx.serialization.json.JsonObject?, fileName: String?) {
+        if (fileObj == null) return
+        val animeTitle = fileObj["animeTitle"]?.jsonPrimitive?.content
+        val animeUrl = fileObj["animeUrl"]?.jsonPrimitive?.content
+        val sourceId = fileObj["sourceId"]?.jsonPrimitive?.longOrNull
+        val sourceName = fileObj["sourceName"]?.jsonPrimitive?.content
+        val episodeUrl = fileObj["episodeUrl"]?.jsonPrimitive?.content
+        val episodeNumber = fileObj["episodeNumber"]?.jsonPrimitive?.doubleOrNull ?: 1.0
+
+        if (animeTitle != null && animeUrl != null && sourceId != null && episodeUrl != null) {
+            val meta = WatchPartyAnimeMeta(
+                animeTitle = animeTitle,
+                animeUrl = animeUrl,
+                sourceId = sourceId,
+                sourceName = sourceName ?: "Sumber Anime",
+                episodeName = fileName ?: "Episode",
+                episodeUrl = episodeUrl,
+                episodeNumber = episodeNumber,
+            )
+            _hostAnimeMeta.value = meta
+            _events.emit(SyncplayEvent.HostAnimeChanged(meta))
+        }
     }
 
     private suspend fun handleStateUpdate(stateObj: kotlinx.serialization.json.JsonObject) {
@@ -404,15 +438,15 @@ class SyncplayClient {
             }
         }
 
-        // 3. Playstate
+        // 3. Playstate (Only applied to non-host guests)
         stateObj["playstate"]?.jsonObject?.let { playstateObj ->
             val pos = playstateObj["position"]?.jsonPrimitive?.doubleOrNull ?: 0.0
             val paused = playstateObj["paused"]?.jsonPrimitive?.booleanOrNull ?: true
             val doSeek = playstateObj["doSeek"]?.jsonPrimitive?.booleanOrNull ?: false
             val setBy = playstateObj["setBy"]?.jsonPrimitive?.content
 
-            // Only apply remote state if we are not ignoring server updates
-            if (clientIgnoringOnTheFly == 0L) {
+            // Only apply remote state if we are NOT the host, and not ignoring server updates
+            if (!_isHost.value && clientIgnoringOnTheFly == 0L) {
                 val state = SyncplayPlayState(
                     position = pos,
                     paused = paused,
@@ -469,14 +503,22 @@ class SyncplayClient {
             ""
         }
 
+        // Only host sends playstate; guests only send ping & ignoring counters
+        val playstateField = if (_isHost.value) {
+            """
+            "playstate": {
+                "position": $position,
+                "paused": $paused${if (doSeek) """, "doSeek": true""" else ""}
+            },
+            """.trimIndent()
+        } else {
+            ""
+        }
+
         val stateJson = """
             {
                 "State": {
-                    "playstate": {
-                        "position": $position,
-                        "paused": $paused${if (doSeek) """, "doSeek": true""" else ""}
-                    },
-                    "ping": {
+                    $playstateField"ping": {
                         "clientLatencyCalculation": $now,
                         "clientRtt": $clientRtt$latencyCalcField
                     }$ignoringField
@@ -493,9 +535,69 @@ class SyncplayClient {
     }
 
     fun sendPlayState(position: Double, paused: Boolean, doSeek: Boolean = false) {
+        if (!_isHost.value) return // Guest never controls room playback
         localPosition = position
         localPaused = paused
         sendState(position, paused, doSeek = doSeek, stateChange = true)
+    }
+
+    fun setAnimeEpisode(
+        name: String,
+        duration: Double,
+        size: Long = 0L,
+        animeTitle: String,
+        animeUrl: String,
+        sourceId: Long,
+        sourceName: String,
+        episodeUrl: String,
+        episodeNumber: Double,
+    ) {
+        val meta = WatchPartyAnimeMeta(
+            animeTitle = animeTitle,
+            animeUrl = animeUrl,
+            sourceId = sourceId,
+            sourceName = sourceName,
+            episodeName = name,
+            episodeUrl = episodeUrl,
+            episodeNumber = episodeNumber,
+        )
+        _hostAnimeMeta.value = meta
+        _currentFile.value = SyncplayFile(name, duration, size)
+        if (_isConnected.value) {
+            sendSetAnimeFile(name, duration, size, meta)
+        }
+    }
+
+    private fun sendSetAnimeFile(
+        name: String,
+        duration: Double,
+        size: Long,
+        meta: WatchPartyAnimeMeta,
+    ) {
+        val escapedName = name.replace("\"", "\\\"")
+        val escapedTitle = meta.animeTitle.replace("\"", "\\\"")
+        val escapedAnimeUrl = meta.animeUrl.replace("\"", "\\\"")
+        val escapedEpUrl = meta.episodeUrl.replace("\"", "\\\"")
+        val escapedSourceName = meta.sourceName.replace("\"", "\\\"")
+
+        val fileJson = """
+            {
+                "Set": {
+                    "file": {
+                        "name": "$escapedName",
+                        "duration": $duration,
+                        "size": $size,
+                        "animeTitle": "$escapedTitle",
+                        "animeUrl": "$escapedAnimeUrl",
+                        "sourceId": ${meta.sourceId},
+                        "sourceName": "$escapedSourceName",
+                        "episodeUrl": "$escapedEpUrl",
+                        "episodeNumber": ${meta.episodeNumber}
+                    }
+                }
+            }
+        """.trimIndent().replace("\n", "")
+        sendRawLine(fileJson)
     }
 
     fun setFile(name: String, duration: Double, size: Long = 0L) {
@@ -565,6 +667,7 @@ class SyncplayClient {
         _currentRoom.value = null
         _connectionState.value = SyncplayConnectionState.Disconnected(reason)
         _isHost.value = false
+        _hostAnimeMeta.value = null
         serverIgnoringOnTheFly = 0L
         clientIgnoringOnTheFly = 0L
         latestServerLatencyCalculation = null

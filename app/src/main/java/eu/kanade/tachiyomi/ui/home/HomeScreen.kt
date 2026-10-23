@@ -180,6 +180,8 @@ object HomeScreen : Screen() {
                                     } else {
                                         BrowseTab.showAnimeExtension()
                                     }
+                                } else if (it.anime) {
+                                    BrowseTab.showAnimeSources()
                                 }
                                 BrowseTab
                             }

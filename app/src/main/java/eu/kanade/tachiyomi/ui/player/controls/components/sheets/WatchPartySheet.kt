@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
@@ -169,45 +170,6 @@ fun WatchPartySheet(
                     }
                 }
 
-                // Host Control Setting
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Hanya Host yang Mengontrol",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = if (isHost) {
-                                    "Jika aktif, hanya Anda yang dapat Play, Pause, dan Seek"
-                                } else {
-                                    "Hanya Host yang memiliki kontrol playback"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = isHostOnly,
-                            onCheckedChange = { onToggleHostOnly(it) },
-                            enabled = isHost,
-                        )
-                    }
-                }
-
                 // Members List
                 Text(
                     text = "Anggota Room (${users.size})",
@@ -332,11 +294,23 @@ fun WatchPartySheet(
                         modifier = Modifier.fillMaxWidth(),
                     )
 
+                    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
                     OutlinedTextField(
                         value = joinRoom,
                         onValueChange = { joinRoom = it },
-                        label = { Text("Nama Room") },
-                        placeholder = { Text("Contoh: nobar-onepiece") },
+                        label = { Text("ID Room") },
+                        placeholder = { Text("Masukkan ID Room") },
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                clipboardManager.getText()?.text?.let { clipText ->
+                                    if (clipText.isNotBlank()) {
+                                        joinRoom = clipText.trim()
+                                    }
+                                }
+                            }) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Tempel ID Room")
+                            }
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -422,45 +396,11 @@ fun WatchPartySheet(
                         modifier = Modifier.fillMaxWidth(),
                     )
 
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Hanya Host yang Mengontrol",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    text = "Anggota lain tidak dapat Play/Pause/Seek",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
-                                checked = createHostOnly,
-                                onCheckedChange = { createHostOnly = it },
-                            )
-                        }
-                    }
-
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Button(
                         onClick = {
                             if (createRoom.isNotBlank() && createUsername.isNotBlank()) {
-                                onToggleHostOnly(createHostOnly)
                                 onConnect(
                                     createServer.trim(),
                                     createRoom.trim(),

@@ -402,6 +402,9 @@ class PlayerViewModel @JvmOverloads constructor(
                     is SyncplayEvent.UserListUpdated -> {
                         // User list updated
                     }
+                    is SyncplayEvent.HostAnimeChanged -> {
+                        // Host anime metadata changed; handled by NobarScreen
+                    }
                 }
             }
         }
@@ -666,18 +669,14 @@ class PlayerViewModel @JvmOverloads constructor(
         val myUsername = syncplayClient.currentUsername.value
         if (playstate.setBy != null && playstate.setBy == myUsername) return
 
-        if (isHostOnly.value && playstate.setBy != null) {
-            val hostUser = syncplayClient.users.value.firstOrNull { it.isHost }
-            if (hostUser != null && playstate.setBy != hostUser.username) {
-                return
-            }
-        }
+        // If I am host, ignore remote playstate (host controls playback)
+        if (syncplayClient.isHost.value) return
 
         hostPosition.update { playstate.position }
         hostPositionTimestamp.update { android.os.SystemClock.elapsedRealtime() }
         hostIsPaused.update { playstate.paused }
 
-        val who = playstate.setBy ?: "Anggota"
+        val who = playstate.setBy ?: "Host"
 
         if (playstate.doSeek) {
             isRemoteSyncAction = true
@@ -784,25 +783,29 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun pause() {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value && !isRemoteSyncAction) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengontrol pemutaran") }
+            return
+        }
         activity.player.paused = true
         _paused.update { true }
         runCatching {
             activity.setPictureInPictureParams(activity.createPipParams())
         }
-        if (syncplayClient.isConnected.value && !isRemoteSyncAction) {
-            if (!isHostOnly.value || syncplayClient.isHost.value) {
-                syncplayClient.sendPlayState(pos.value.toDouble(), paused = true)
-            }
+        if (syncplayClient.isConnected.value && syncplayClient.isHost.value && !isRemoteSyncAction) {
+            syncplayClient.sendPlayState(pos.value.toDouble(), paused = true)
         }
     }
 
     fun unpause() {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value && !isRemoteSyncAction) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengontrol pemutaran") }
+            return
+        }
         activity.player.paused = false
         _paused.update { false }
-        if (syncplayClient.isConnected.value && !isRemoteSyncAction) {
-            if (!isHostOnly.value || syncplayClient.isHost.value) {
-                syncplayClient.sendPlayState(pos.value.toDouble(), paused = false)
-            }
+        if (syncplayClient.isConnected.value && syncplayClient.isHost.value && !isRemoteSyncAction) {
+            syncplayClient.sendPlayState(pos.value.toDouble(), paused = false)
         }
     }
 
@@ -885,16 +888,22 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun seekBy(offset: Int, precise: Boolean = false) {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value && !isRemoteSyncAction) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengubah durasi video") }
+            return
+        }
         MPVLib.command(arrayOf("seek", offset.toString(), if (precise) "relative+exact" else "relative"))
     }
 
     fun seekTo(position: Int, precise: Boolean = true) {
         if (position !in 0..(activity.player.duration ?: 0)) return
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value && !isRemoteSyncAction) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengubah durasi video") }
+            return
+        }
         MPVLib.command(arrayOf("seek", position.toString(), if (precise) "absolute" else "absolute+keyframes"))
-        if (syncplayClient.isConnected.value && !isRemoteSyncAction) {
-            if (!isHostOnly.value || syncplayClient.isHost.value) {
-                syncplayClient.sendPlayState(position.toDouble(), paused = paused.value, doSeek = true)
-            }
+        if (syncplayClient.isConnected.value && syncplayClient.isHost.value && !isRemoteSyncAction) {
+            syncplayClient.sendPlayState(position.toDouble(), paused = paused.value, doSeek = true)
         }
     }
 
@@ -2311,12 +2320,26 @@ class PlayerViewModel @JvmOverloads constructor(
         val episode = currentEpisode.value ?: return
         val source = currentSource.value
         val video = currentVideo.value
-        val quality = video?.quality ?: "Default"
+        val quality = video?.videoTitle ?: "Default"
         val sourceName = source?.name ?: "Local"
         val dur = duration.value.toDouble()
 
         val fileName = "${anime.title} - Ep ${episode.episode_number} [$sourceName|$quality]"
         syncplayClient.setFile(fileName, dur)
+
+        if (syncplayClient.isHost.value) {
+            syncplayClient.setAnimeEpisode(
+                name = fileName,
+                duration = dur,
+                size = 0L,
+                animeTitle = anime.title,
+                animeUrl = anime.url,
+                sourceId = anime.source,
+                sourceName = sourceName,
+                episodeUrl = episode.url,
+                episodeNumber = episode.episode_number.toDouble(),
+            )
+        }
     }
 
     fun syncToHost() {
