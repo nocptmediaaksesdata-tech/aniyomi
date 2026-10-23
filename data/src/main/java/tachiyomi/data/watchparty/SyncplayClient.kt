@@ -36,6 +36,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 sealed interface SyncplayConnectionState {
@@ -99,9 +100,22 @@ class SyncplayClient {
     @Volatile
     private var latestServerLatencyCalculation: Double? = null
 
+    // ignoringOnTheFly flow control
+    @Volatile
+    private var serverIgnoringOnTheFly: Long = 0L
+
+    @Volatile
+    private var clientIgnoringOnTheFly: Long = 0L
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    private fun md5(input: String): String {
+        val md = MessageDigest.getInstance("MD5")
+        val digest = md.digest(input.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     suspend fun connect(config: WatchPartyConfig): Result<Unit> = withContext(Dispatchers.IO) {
@@ -122,22 +136,30 @@ class SyncplayClient {
             userMap.clear()
             _users.value = emptyList()
 
-            // 1. Send Handshake Hello
-            val helloPassword = if (!config.password.isNullOrBlank()) "\"${config.password}\"" else "null"
+            // 1. Send Handshake Hello with official Syncplay 1.7.x protocol specifications
+            val pwd = config.password
+            val helloPassword = if (!pwd.isNullOrBlank()) "\"${md5(pwd)}\"" else "null"
             val helloJson = """
                 {
                     "Hello": {
                         "username": "${config.username.replace("\"", "\\\"")}",
                         "room": {"name": "${config.roomName.replace("\"", "\\\"")}"},
-                        "version": "1.2.0",
+                        "version": "1.2.255",
                         "realversion": "1.7.3",
-                        "features": {"chat": true, "readiness": true},
+                        "features": {
+                            "chat": true,
+                            "readiness": true,
+                            "sharedPlaylists": true
+                        },
                         "password": $helloPassword
                     }
                 }
             """.trimIndent().replace("\n", "")
 
             sendRawLine(helloJson)
+
+            // 2. Request initial userlist
+            sendRawLine("""{"List": null}""")
 
             // Start listening loop
             listenJob = scope.launch {
@@ -167,17 +189,24 @@ class SyncplayClient {
             while (scope.isActive) {
                 val line = br.readLine()
                 if (line == null) {
-                    disconnectReason = "Koneksi ditutup oleh server (Server timeout atau reset koneksi)"
+                    disconnectReason = "Koneksi ditutup oleh server Syncplay (EOF / Server timeout)"
                     break
                 }
                 if (line.isBlank()) continue
                 handleIncomingLine(line, config)
             }
+        } catch (e: java.net.SocketTimeoutException) {
+            disconnectReason = "Koneksi timeout ke server Syncplay (Waktu habis)"
+            logcat(LogPriority.WARN, e) { "Syncplay timeout: $disconnectReason" }
+        } catch (e: java.net.ConnectException) {
+            disconnectReason = "Tidak dapat terhubung ke server (Koneksi ditolak / Port tidak aktif)"
+            logcat(LogPriority.WARN, e) { "Syncplay connect error: $disconnectReason" }
         } catch (e: java.net.SocketException) {
-            disconnectReason = "Jaringan terputus (Socket error: ${e.localizedMessage ?: e.message})"
+            disconnectReason =
+                "Jaringan terputus (Socket reset / ditutup oleh remote: ${e.localizedMessage ?: e.message})"
             logcat(LogPriority.WARN, e) { "Syncplay socket read error: $disconnectReason" }
         } catch (e: java.io.EOFException) {
-            disconnectReason = "Server menutup koneksi tiba-tiba (EOF)"
+            disconnectReason = "Server Syncplay menutup koneksi soket (EOF)"
             logcat(LogPriority.WARN, e) { "Syncplay EOF error: $disconnectReason" }
         } catch (e: Exception) {
             disconnectReason = "Error koneksi: ${e.localizedMessage ?: e.message ?: "Unknown"}"
@@ -209,25 +238,31 @@ class SyncplayClient {
                 _connectionState.value = SyncplayConnectionState.Connected(room, username)
                 _events.emit(SyncplayEvent.Connected(username, room, motd))
 
-                // Resend current file if set
+                // Request user list & resend file if set
+                sendRawLine("""{"List": null}""")
                 currentFile.value?.let { file ->
                     sendSetFile(file.name, file.duration, file.size)
                 }
             }
 
-            // 2. Check Set (User list, File list, Playlist)
+            // 2. Check List (Initial room users and files)
+            root["List"]?.jsonObject?.let { listObj ->
+                handleListUpdate(listObj, config)
+            }
+
+            // 3. Check Set (User list updates, File updates, Playlist)
             root["Set"]?.jsonObject?.let { setObj ->
                 setObj["user"]?.jsonObject?.let { userObj ->
                     handleUserUpdate(userObj, config)
                 }
             }
 
-            // 3. Check State (Playstate, Ping)
+            // 4. Check State (Playstate, Ping, ignoringOnTheFly)
             root["State"]?.jsonObject?.let { stateObj ->
                 handleStateUpdate(stateObj)
             }
 
-            // 4. Check Chat / System Message
+            // 5. Check Chat / System Message
             root["Chat"]?.jsonObject?.let { chatObj ->
                 val user = chatObj["username"]?.jsonPrimitive?.content ?: "Sistem"
                 val msg = chatObj["message"]?.jsonPrimitive?.content ?: ""
@@ -305,77 +340,151 @@ class SyncplayClient {
         // Host determination: The first user in the room
         val userList = userMap.values.toList()
         _users.value = userList
-        _isHost.value = userList.firstOrNull()?.username == _currentUsername.value
+        _isHost.value = userList.any { it.isHost && it.username == _currentUsername.value } ||
+            (userList.firstOrNull()?.username == _currentUsername.value)
+        _events.emit(SyncplayEvent.UserListUpdated(userList))
+    }
+
+    private suspend fun handleListUpdate(listObj: kotlinx.serialization.json.JsonObject, config: WatchPartyConfig) {
+        val currentRoomName = _currentRoom.value ?: config.roomName
+        val roomObj = listObj[currentRoomName]?.jsonObject ?: return
+
+        for ((username, data) in roomObj) {
+            val userEntry = data.jsonObject
+            val fileObj = userEntry["file"]?.jsonObject
+            val fileName = fileObj?.get("name")?.jsonPrimitive?.content
+            val fileDuration = fileObj?.get("duration")?.jsonPrimitive?.doubleOrNull ?: 0.0
+            val fileSize = fileObj?.get("size")?.jsonPrimitive?.longOrNull ?: 0L
+            val isController = userEntry["controller"]?.jsonPrimitive?.booleanOrNull ?: false
+            val isReady = userEntry["isReady"]?.jsonPrimitive?.booleanOrNull ?: true
+
+            val user = SyncplayUser(
+                username = username,
+                room = currentRoomName,
+                fileName = fileName,
+                fileDuration = fileDuration,
+                fileSize = fileSize,
+                isReady = isReady,
+                isHost = isController,
+            )
+            userMap[username] = user
+        }
+
+        val userList = userMap.values.toList()
+        _users.value = userList
+        _isHost.value = userList.any { it.isHost && it.username == _currentUsername.value } ||
+            (userList.firstOrNull()?.username == _currentUsername.value)
         _events.emit(SyncplayEvent.UserListUpdated(userList))
     }
 
     private suspend fun handleStateUpdate(stateObj: kotlinx.serialization.json.JsonObject) {
-        // Handle ping response & echo serverLatencyCalculation
+        // 1. Flow control: ignoringOnTheFly handling
+        stateObj["ignoringOnTheFly"]?.jsonObject?.let { ignore ->
+            ignore["server"]?.jsonPrimitive?.longOrNull?.let { sIgnore ->
+                serverIgnoringOnTheFly = sIgnore
+                clientIgnoringOnTheFly = 0L
+            }
+            ignore["client"]?.jsonPrimitive?.longOrNull?.let { cIgnore ->
+                if (cIgnore == clientIgnoringOnTheFly) {
+                    clientIgnoringOnTheFly = 0L
+                }
+            }
+        }
+
+        // 2. Ping calculation
         stateObj["ping"]?.jsonObject?.let { pingObj ->
             val sCalc = pingObj["latencyCalculation"]?.jsonPrimitive?.doubleOrNull
             if (sCalc != null) {
                 latestServerLatencyCalculation = sCalc
             }
             val cCalc = pingObj["clientLatencyCalculation"]?.jsonPrimitive?.doubleOrNull
-            if (cCalc != null && lastPingSentTime > 0) {
+            if (cCalc != null) {
                 val now = System.currentTimeMillis() / 1000.0
                 clientRtt = (now - cCalc).coerceAtLeast(0.0)
             }
-
-            // Immediately reply to server ping with serverLatencyCalculation so server never times out!
-            if (sCalc != null && _isConnected.value) {
-                sendPing()
-            }
         }
 
-        // Handle playstate
+        // 3. Playstate
         stateObj["playstate"]?.jsonObject?.let { playstateObj ->
             val pos = playstateObj["position"]?.jsonPrimitive?.doubleOrNull ?: 0.0
             val paused = playstateObj["paused"]?.jsonPrimitive?.booleanOrNull ?: true
             val doSeek = playstateObj["doSeek"]?.jsonPrimitive?.booleanOrNull ?: false
             val setBy = playstateObj["setBy"]?.jsonPrimitive?.content
 
-            val state = SyncplayPlayState(
-                position = pos,
-                paused = paused,
-                doSeek = doSeek,
-                setBy = setBy,
-            )
-            _events.emit(SyncplayEvent.PlayStateChanged(state))
+            // Only apply remote state if we are not ignoring server updates
+            if (clientIgnoringOnTheFly == 0L) {
+                val state = SyncplayPlayState(
+                    position = pos,
+                    paused = paused,
+                    doSeek = doSeek,
+                    setBy = setBy,
+                )
+                _events.emit(SyncplayEvent.PlayStateChanged(state))
+            }
+        }
+
+        // 4. Immediately reply to server State (event-driven ping-pong)
+        if (_isConnected.value && socket?.isClosed == false) {
+            sendState(localPosition, localPaused, doSeek = false, stateChange = false)
         }
     }
 
     private suspend fun pingLoop() {
         while (scope.isActive) {
-            delay(1000)
+            delay(2000)
             if (_isConnected.value && socket?.isClosed == false) {
-                sendPing()
+                val now = System.currentTimeMillis() / 1000.0
+                if (now - lastPingSentTime >= 2.0) {
+                    sendState(localPosition, localPaused, doSeek = false, stateChange = false)
+                }
             }
         }
     }
 
-    private fun sendPing() {
+    private fun sendState(
+        position: Double,
+        paused: Boolean,
+        doSeek: Boolean = false,
+        stateChange: Boolean = false,
+    ) {
         val now = System.currentTimeMillis() / 1000.0
         lastPingSentTime = now
-        val sCalc = latestServerLatencyCalculation
-        val serverLatencyField = if (sCalc != null) """, "serverLatencyCalculation": $sCalc""" else ""
 
-        val pingJson = """
+        if (stateChange) {
+            clientIgnoringOnTheFly += 1
+        }
+
+        val sCalc = latestServerLatencyCalculation
+        val latencyCalcField = if (sCalc != null) """, "latencyCalculation": $sCalc""" else ""
+
+        val sIgnore = serverIgnoringOnTheFly
+        val cIgnore = clientIgnoringOnTheFly
+        val ignoringField = if (sIgnore > 0 || cIgnore > 0) {
+            val sPart = if (sIgnore > 0) """"server": $sIgnore""" else ""
+            val cPart = if (cIgnore > 0) """"client": $cIgnore""" else ""
+            val parts = listOf(sPart, cPart).filter { it.isNotEmpty() }.joinToString(", ")
+            serverIgnoringOnTheFly = 0L
+            """, "ignoringOnTheFly": { $parts }"""
+        } else {
+            ""
+        }
+
+        val stateJson = """
             {
                 "State": {
+                    "playstate": {
+                        "position": $position,
+                        "paused": $paused${if (doSeek) """, "doSeek": true""" else ""}
+                    },
                     "ping": {
                         "clientLatencyCalculation": $now,
-                        "clientRtt": $clientRtt$serverLatencyField
-                    },
-                    "playstate": {
-                        "position": $localPosition,
-                        "paused": $localPaused
-                    }
+                        "clientRtt": $clientRtt$latencyCalcField
+                    }$ignoringField
                 }
             }
         """.trimIndent().replace("\n", "")
 
-        sendRawLine(pingJson)
+        sendRawLine(stateJson)
     }
 
     fun updateLocalPlayback(position: Double, paused: Boolean) {
@@ -386,28 +495,7 @@ class SyncplayClient {
     fun sendPlayState(position: Double, paused: Boolean, doSeek: Boolean = false) {
         localPosition = position
         localPaused = paused
-
-        val now = System.currentTimeMillis() / 1000.0
-        val sCalc = latestServerLatencyCalculation
-        val serverLatencyField = if (sCalc != null) """, "serverLatencyCalculation": $sCalc""" else ""
-
-        val stateJson = """
-            {
-                "State": {
-                    "ping": {
-                        "clientLatencyCalculation": $now,
-                        "clientRtt": $clientRtt$serverLatencyField
-                    },
-                    "playstate": {
-                        "position": $position,
-                        "paused": $paused,
-                        "doSeek": $doSeek
-                    }
-                }
-            }
-        """.trimIndent().replace("\n", "")
-
-        sendRawLine(stateJson)
+        sendState(position, paused, doSeek = doSeek, stateChange = true)
     }
 
     fun setFile(name: String, duration: Double, size: Long = 0L) {
@@ -477,6 +565,8 @@ class SyncplayClient {
         _currentRoom.value = null
         _connectionState.value = SyncplayConnectionState.Disconnected(reason)
         _isHost.value = false
+        serverIgnoringOnTheFly = 0L
+        clientIgnoringOnTheFly = 0L
         latestServerLatencyCalculation = null
         _events.tryEmit(SyncplayEvent.Disconnected(reason))
     }
