@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.ui.player.controls.components.sheets
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,8 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -20,6 +17,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -31,9 +29,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,12 +67,28 @@ fun WatchPartySheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var server by remember { mutableStateOf(initialServer.ifBlank { "syncplay.pl:8999" }) }
-    var room by remember { mutableStateOf(initialRoom) }
-    var username by remember {
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    // Separate states for Masuk Room
+    var joinServer by remember { mutableStateOf(initialServer.ifBlank { "syncplay.pl:8999" }) }
+    var joinRoom by remember { mutableStateOf(initialRoom) }
+    var joinUsername by remember {
         mutableStateOf(initialUsername.ifBlank { "User" + (1000..9999).random() })
     }
-    var password by remember { mutableStateOf(initialPassword) }
+    var joinPassword by remember { mutableStateOf(initialPassword) }
+
+    // Separate states for Buat Room
+    var createServer by remember { mutableStateOf(initialServer.ifBlank { "syncplay.pl:8999" }) }
+    var createRoom by remember {
+        mutableStateOf(
+            if (initialRoom.isNotBlank()) initialRoom else "nobar-" + (1000..9999).random(),
+        )
+    }
+    var createUsername by remember {
+        mutableStateOf(initialUsername.ifBlank { "Host" + (1000..9999).random() })
+    }
+    var createPassword by remember { mutableStateOf("") }
+    var createHostOnly by remember { mutableStateOf(isHostOnly) }
 
     PlayerSheet(
         onDismissRequest = onDismissRequest,
@@ -279,64 +296,185 @@ fun WatchPartySheet(
                     Text("Keluar dari Room")
                 }
             } else {
-                // Connection Form
-                Text(
-                    text = "Gabung atau Buat Room Syncplay untuk menonton anime bersama secara tersinkronisasi.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Tab Selection: Masuk Room vs Buat Room
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("Masuk Room", fontWeight = FontWeight.Bold) },
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("Buat Room", fontWeight = FontWeight.Bold) },
+                    )
+                }
 
-                OutlinedTextField(
-                    value = server,
-                    onValueChange = { server = it },
-                    label = { Text("Server Syncplay") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Spacer(modifier = Modifier.height(4.dp))
 
-                OutlinedTextField(
-                    value = room,
-                    onValueChange = { room = it },
-                    label = { Text("Nama Room") },
-                    placeholder = { Text("Contoh: nobar-onepiece") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (selectedTab == 0) {
+                    // Logic & UI: MASUK ROOM
+                    Text(
+                        text = "Gabung ke room yang sudah dibuat oleh teman/host.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
 
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("Nama Pengguna (Username)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    OutlinedTextField(
+                        value = joinServer,
+                        onValueChange = { joinServer = it },
+                        label = { Text("Server Syncplay") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password Room (Opsional)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    OutlinedTextField(
+                        value = joinRoom,
+                        onValueChange = { joinRoom = it },
+                        label = { Text("Nama Room") },
+                        placeholder = { Text("Contoh: nobar-onepiece") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = joinUsername,
+                        onValueChange = { joinUsername = it },
+                        label = { Text("Nama Pengguna (Username)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
-                Button(
-                    onClick = {
-                        if (room.isNotBlank() && username.isNotBlank()) {
-                            onConnect(
-                                server.trim(),
-                                room.trim(),
-                                username.trim(),
-                                password.trim().takeIf { it.isNotBlank() },
+                    OutlinedTextField(
+                        value = joinPassword,
+                        onValueChange = { joinPassword = it },
+                        label = { Text("Password Room (Opsional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            if (joinRoom.isNotBlank() && joinUsername.isNotBlank()) {
+                                onConnect(
+                                    joinServer.trim(),
+                                    joinRoom.trim(),
+                                    joinUsername.trim(),
+                                    joinPassword.trim().takeIf { it.isNotBlank() },
+                                )
+                            }
+                        },
+                        enabled = joinRoom.isNotBlank() && joinUsername.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text("Masuk ke Room")
+                    }
+                } else {
+                    // Logic & UI: BUAT ROOM
+                    Text(
+                        text = "Buat room baru sebagai Host untuk membagikan sesi nobar.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    OutlinedTextField(
+                        value = createServer,
+                        onValueChange = { createServer = it },
+                        label = { Text("Server Syncplay") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    OutlinedTextField(
+                        value = createRoom,
+                        onValueChange = { createRoom = it },
+                        label = { Text("Nama Room Baru") },
+                        placeholder = { Text("Nama unik room") },
+                        trailingIcon = {
+                            IconButton(onClick = { createRoom = "nobar-" + (1000..9999).random() }) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Acak Nama")
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    OutlinedTextField(
+                        value = createUsername,
+                        onValueChange = { createUsername = it },
+                        label = { Text("Nama Host") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    OutlinedTextField(
+                        value = createPassword,
+                        onValueChange = { createPassword = it },
+                        label = { Text("Password Room (Opsional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Hanya Host yang Mengontrol",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = "Anggota lain tidak dapat Play/Pause/Seek",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = createHostOnly,
+                                onCheckedChange = { createHostOnly = it },
                             )
                         }
-                    },
-                    enabled = room.isNotBlank() && username.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                ) {
-                    Text("Gabung / Buat Room")
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            if (createRoom.isNotBlank() && createUsername.isNotBlank()) {
+                                onToggleHostOnly(createHostOnly)
+                                onConnect(
+                                    createServer.trim(),
+                                    createRoom.trim(),
+                                    createUsername.trim(),
+                                    createPassword.trim().takeIf { it.isNotBlank() },
+                                )
+                            }
+                        },
+                        enabled = createRoom.isNotBlank() && createUsername.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text("Buat Room Baru")
+                    }
                 }
             }
         }

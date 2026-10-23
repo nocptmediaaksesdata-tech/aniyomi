@@ -192,6 +192,8 @@ class PlayerViewModel @JvmOverloads constructor(
     val isHost = syncplayClient.isHost
     val isHostOnly = MutableStateFlow(playerPreferences.syncplayHostOnly().get())
     val hostPosition = MutableStateFlow<Double?>(null)
+    val hostPositionTimestamp = MutableStateFlow<Long>(0L)
+    val hostIsPaused = MutableStateFlow<Boolean>(true)
     val isDesyncedFromHost = MutableStateFlow(false)
     val desyncSeconds = MutableStateFlow(0L)
 
@@ -373,6 +375,8 @@ class PlayerViewModel @JvmOverloads constructor(
                     is SyncplayEvent.Disconnected -> {
                         playerUpdate.update { PlayerUpdates.ShowText("Terputus dari Watch Party") }
                         hostPosition.update { null }
+                        hostPositionTimestamp.update { 0L }
+                        hostIsPaused.update { true }
                         isDesyncedFromHost.update { false }
                     }
                     is SyncplayEvent.UserJoined -> {
@@ -626,15 +630,30 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     private fun checkDesync(currentPos: Double) {
-        val hostPos = hostPosition.value
-        if (syncplayClient.isConnected.value && hostPos != null && !paused.value) {
-            val diff = hostPos - currentPos
-            if (kotlin.math.abs(diff) > 3.0) {
-                isDesyncedFromHost.update { true }
-                desyncSeconds.update { kotlin.math.abs(diff).toLong() }
-            } else {
-                isDesyncedFromHost.update { false }
-            }
+        // The host can never be desynced from the host
+        if (!syncplayClient.isConnected.value || syncplayClient.isHost.value) {
+            isDesyncedFromHost.update { false }
+            return
+        }
+
+        val hPos = hostPosition.value ?: run {
+            isDesyncedFromHost.update { false }
+            return
+        }
+
+        val hTime = hostPositionTimestamp.value
+        val hPaused = hostIsPaused.value
+        val estimatedHostPos = if (hPaused) {
+            hPos
+        } else {
+            val elapsed = (android.os.SystemClock.elapsedRealtime() - hTime) / 1000.0
+            hPos + elapsed
+        }
+
+        val diff = estimatedHostPos - currentPos
+        if (diff > 3.0) {
+            isDesyncedFromHost.update { true }
+            desyncSeconds.update { kotlin.math.round(diff).toLong() }
         } else {
             isDesyncedFromHost.update { false }
         }
@@ -652,6 +671,8 @@ class PlayerViewModel @JvmOverloads constructor(
         }
 
         hostPosition.update { playstate.position }
+        hostPositionTimestamp.update { android.os.SystemClock.elapsedRealtime() }
+        hostIsPaused.update { playstate.paused }
 
         val who = playstate.setBy ?: "Anggota"
 
@@ -661,6 +682,7 @@ class PlayerViewModel @JvmOverloads constructor(
             isRemoteSyncAction = false
             val timeStr = DateUtils.formatElapsedTime(playstate.position.toLong())
             playerUpdate.update { PlayerUpdates.ShowText("$who melompat ke $timeStr") }
+            isDesyncedFromHost.update { false }
         }
 
         if (playstate.paused != paused.value) {
@@ -2295,7 +2317,15 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun syncToHost() {
-        val target = hostPosition.value ?: return
+        val hPos = hostPosition.value ?: return
+        val hTime = hostPositionTimestamp.value
+        val hPaused = hostIsPaused.value
+        val target = if (hPaused) {
+            hPos
+        } else {
+            val elapsed = (android.os.SystemClock.elapsedRealtime() - hTime) / 1000.0
+            hPos + elapsed
+        }
         seekTo(target.toInt(), precise = true)
         isDesyncedFromHost.update { false }
         playerUpdate.update { PlayerUpdates.ShowText("Menyinkronkan ke posisi host") }
@@ -2326,6 +2356,8 @@ class PlayerViewModel @JvmOverloads constructor(
     fun disconnectSyncplay() {
         syncplayClient.disconnect()
         hostPosition.update { null }
+        hostPositionTimestamp.update { 0L }
+        hostIsPaused.update { true }
         isDesyncedFromHost.update { false }
     }
 

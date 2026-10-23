@@ -13,8 +13,11 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
@@ -49,6 +52,7 @@ class SyncplayClient {
     private var socket: Socket? = null
     private var reader: BufferedReader? = null
     private var writer: BufferedWriter? = null
+    private val writeMutex = Mutex()
 
     private var listenJob: Job? = null
     private var pingJob: Job? = null
@@ -103,6 +107,8 @@ class SyncplayClient {
         _connectionState.value = SyncplayConnectionState.Connecting
         try {
             val sock = Socket()
+            sock.tcpNoDelay = true
+            sock.keepAlive = true
             sock.connect(InetSocketAddress(config.serverHost, config.serverPort), 10_000)
             socket = sock
             reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
@@ -135,7 +141,7 @@ class SyncplayClient {
                 listenLoop(config)
             }
 
-            // Start ping loop
+            // Start ping loop that runs continuously while coroutine is active
             pingJob = scope.launch {
                 pingLoop()
             }
@@ -212,16 +218,36 @@ class SyncplayClient {
     }
 
     private suspend fun handleUserUpdate(userObj: kotlinx.serialization.json.JsonObject, config: WatchPartyConfig) {
+        val currentRoomName = _currentRoom.value ?: config.roomName
+
         for ((username, data) in userObj) {
             val userEntry = data.jsonObject
-            val event = userEntry["event"]?.jsonPrimitive?.content
-            if (event == "left") {
-                userMap.remove(username)
-                _events.emit(SyncplayEvent.UserLeft(username))
+
+            // Syncplay sends event as an object {"left": true} or primitive "left"
+            val isLeft = userEntry["event"]?.let { elem ->
+                when (elem) {
+                    is kotlinx.serialization.json.JsonObject -> elem["left"]?.jsonPrimitive?.booleanOrNull == true
+                    is JsonPrimitive -> elem.content == "left"
+                    else -> false
+                }
+            } ?: false
+
+            if (isLeft) {
+                if (userMap.remove(username) != null) {
+                    _events.emit(SyncplayEvent.UserLeft(username))
+                }
                 continue
             }
 
-            val room = userEntry["room"]?.jsonObject?.get("name")?.jsonPrimitive?.content ?: _currentRoom.value ?: ""
+            val room = userEntry["room"]?.jsonObject?.get("name")?.jsonPrimitive?.content ?: currentRoomName
+            if (room != currentRoomName) {
+                // User moved to another room, remove from our room
+                if (userMap.remove(username) != null) {
+                    _events.emit(SyncplayEvent.UserLeft(username))
+                }
+                continue
+            }
+
             val fileObj = userEntry["file"]?.jsonObject
             val fileName = fileObj?.get("name")?.jsonPrimitive?.content
             val fileDuration = fileObj?.get("duration")?.jsonPrimitive?.doubleOrNull ?: 0.0
@@ -253,7 +279,7 @@ class SyncplayClient {
             }
         }
 
-        // Update host flag: the first user in list is considered Host
+        // Host determination: The first user in the room
         val userList = userMap.values.toList()
         _users.value = userList
         _isHost.value = userList.firstOrNull()?.username == _currentUsername.value
@@ -263,10 +289,11 @@ class SyncplayClient {
     private suspend fun handleStateUpdate(stateObj: kotlinx.serialization.json.JsonObject) {
         // Handle ping response
         stateObj["ping"]?.jsonObject?.let { pingObj ->
-            val clientLatencyCalc = pingObj["clientLatencyCalculation"]?.jsonPrimitive?.doubleOrNull
-            if (clientLatencyCalc != null && lastPingSentTime > 0) {
+            val echoTimestamp = pingObj["latencyCalculation"]?.jsonPrimitive?.doubleOrNull
+                ?: pingObj["clientLatencyCalculation"]?.jsonPrimitive?.doubleOrNull
+            if (echoTimestamp != null) {
                 val now = System.currentTimeMillis() / 1000.0
-                clientRtt = (now - lastPingSentTime).coerceAtLeast(0.0)
+                clientRtt = (now - echoTimestamp).coerceAtLeast(0.0)
             }
         }
 
@@ -288,9 +315,9 @@ class SyncplayClient {
     }
 
     private suspend fun pingLoop() {
-        while (scope.isActive && _isConnected.value) {
+        while (scope.isActive) {
             delay(1000)
-            if (_isConnected.value) {
+            if (_isConnected.value && socket?.isClosed == false) {
                 sendPing()
             }
         }
@@ -374,14 +401,16 @@ class SyncplayClient {
     private fun sendRawLine(line: String) {
         scope.launch {
             try {
-                val bw = writer ?: return@launch
-                synchronized(bw) {
+                writeMutex.withLock {
+                    val bw = writer ?: return@withLock
                     bw.write(line)
                     bw.write("\r\n")
                     bw.flush()
                 }
             } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to send line to Syncplay socket" }
+                if (scope.isActive) {
+                    logcat(LogPriority.ERROR, e) { "Failed to send line to Syncplay socket" }
+                }
             }
         }
     }
@@ -406,5 +435,6 @@ class SyncplayClient {
         _currentRoom.value = null
         _connectionState.value = SyncplayConnectionState.Disconnected
         _isHost.value = false
+        _events.tryEmit(SyncplayEvent.Disconnected())
     }
 }
