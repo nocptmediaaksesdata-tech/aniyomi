@@ -373,7 +373,10 @@ class PlayerViewModel @JvmOverloads constructor(
                         updateSyncplayFile()
                     }
                     is SyncplayEvent.Disconnected -> {
-                        playerUpdate.update { PlayerUpdates.ShowText("Terputus dari Watch Party") }
+                        val reasonText = if (!event.reason.isNullOrBlank()) " (${event.reason})" else ""
+                        playerUpdate.update {
+                            PlayerUpdates.ShowText("Terputus dari Watch Party$reasonText")
+                        }
                         hostPosition.update { null }
                         hostPositionTimestamp.update { 0L }
                         hostIsPaused.update { true }

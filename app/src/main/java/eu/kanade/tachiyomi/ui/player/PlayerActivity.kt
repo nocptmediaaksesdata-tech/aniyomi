@@ -317,7 +317,6 @@ class PlayerActivity : BaseActivity() {
 
         MPVLib.removeLogObserver(playerObserver)
         MPVLib.removeObserver(playerObserver)
-        viewModel.disconnectSyncplay()
         player.destroy()
 
         super.onDestroy()

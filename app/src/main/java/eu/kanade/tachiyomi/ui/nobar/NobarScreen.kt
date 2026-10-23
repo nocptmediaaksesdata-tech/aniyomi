@@ -357,6 +357,24 @@ class NobarScreen : Screen() {
                                 modifier = Modifier.padding(10.dp),
                             )
                         }
+                    } else if (connectionState is SyncplayConnectionState.Disconnected) {
+                        val reason = (connectionState as SyncplayConnectionState.Disconnected).reason
+                        if (reason.isNotBlank() && reason != "Keluar dari room" && reason != "Memulai koneksi baru") {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(
+                                    text = "Terputus dari room: $reason",
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(10.dp),
+                                )
+                            }
+                        }
                     }
 
                     if (selectedTab == 0) {
