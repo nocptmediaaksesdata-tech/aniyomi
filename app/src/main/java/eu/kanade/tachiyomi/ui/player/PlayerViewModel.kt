@@ -109,6 +109,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import mihon.domain.source.interactor.UpdateAnimeFromRemote
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
@@ -121,10 +122,13 @@ import tachiyomi.domain.custombuttons.interactor.GetCustomButtons
 import tachiyomi.domain.custombuttons.model.CustomButton
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.entries.anime.interactor.GetAnime
+import tachiyomi.domain.entries.anime.interactor.GetAnimeByUrlAndSourceId
+import tachiyomi.domain.entries.anime.interactor.NetworkToLocalAnime
 import tachiyomi.domain.entries.anime.model.Anime
 import tachiyomi.domain.history.anime.interactor.GetNextEpisodes
 import tachiyomi.domain.history.anime.interactor.UpsertAnimeHistory
 import tachiyomi.domain.history.anime.model.AnimeHistoryUpdate
+import tachiyomi.domain.items.episode.interactor.GetEpisodeByUrlAndAnimeId
 import tachiyomi.domain.items.episode.interactor.GetEpisodesByAnimeId
 import tachiyomi.domain.items.episode.interactor.UpdateEpisode
 import tachiyomi.domain.items.episode.model.EpisodeUpdate
@@ -135,6 +139,7 @@ import tachiyomi.domain.track.anime.interactor.GetAnimeTracks
 import tachiyomi.domain.watchparty.model.SyncplayEvent
 import tachiyomi.domain.watchparty.model.SyncplayPlayState
 import tachiyomi.domain.watchparty.model.SyncplayUser
+import tachiyomi.domain.watchparty.model.WatchPartyAnimeMeta
 import tachiyomi.domain.watchparty.model.WatchPartyConfig
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
@@ -180,6 +185,10 @@ class PlayerViewModel @JvmOverloads constructor(
     private val trackSelect: TrackSelect = Injekt.get(),
     private val getIncognitoState: GetAnimeIncognitoState = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val updateAnimeFromRemote: UpdateAnimeFromRemote = Injekt.get(),
+    private val getAnimeByUrlAndSourceId: GetAnimeByUrlAndSourceId = Injekt.get(),
+    private val networkToLocalAnime: NetworkToLocalAnime = Injekt.get(),
+    private val getEpisodeByUrlAndAnimeId: GetEpisodeByUrlAndAnimeId = Injekt.get(),
     uiPreferences: UiPreferences = Injekt.get(),
     val syncplayClient: SyncplayClient = Injekt.get(),
 ) : ViewModel() {
@@ -403,7 +412,32 @@ class PlayerViewModel @JvmOverloads constructor(
                         // User list updated
                     }
                     is SyncplayEvent.HostAnimeChanged -> {
-                        // Host anime metadata changed; handled by NobarScreen
+                        if (!syncplayClient.isHost.value) {
+                            handleHostAnimeChanged(event.meta)
+                        }
+                    }
+                    is SyncplayEvent.SyncRequested -> {
+                        if (syncplayClient.isHost.value) {
+                            val currentPos = pos.value.toDouble()
+                            val isPaused = paused.value
+                            syncplayClient.sendSyncResponse(event.requester, currentPos, isPaused)
+                        }
+                    }
+                    is SyncplayEvent.SyncResponseReceived -> {
+                        if (!syncplayClient.isHost.value) {
+                            isRemoteSyncAction = true
+                            seekTo(event.position.toInt(), precise = true)
+                            if (event.paused) {
+                                pause()
+                            } else {
+                                unpause()
+                            }
+                            isRemoteSyncAction = false
+                            val pretty = Utils.prettyTime(event.position.toInt())
+                            playerUpdate.update {
+                                PlayerUpdates.ShowText("Tersinkronisasi ke posisi Host ($pretty)")
+                            }
+                        }
                     }
                 }
             }
@@ -892,7 +926,12 @@ class PlayerViewModel @JvmOverloads constructor(
             playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengubah durasi video") }
             return
         }
+        val targetPos = (pos.value + offset).coerceIn(0f, duration.value.toFloat())
+        _pos.value = targetPos
         MPVLib.command(arrayOf("seek", offset.toString(), if (precise) "relative+exact" else "relative"))
+        if (syncplayClient.isConnected.value && syncplayClient.isHost.value && !isRemoteSyncAction) {
+            syncplayClient.sendPlayState(targetPos.toDouble(), paused = paused.value, doSeek = true)
+        }
     }
 
     fun seekTo(position: Int, precise: Boolean = true) {
@@ -901,6 +940,7 @@ class PlayerViewModel @JvmOverloads constructor(
             playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengubah durasi video") }
             return
         }
+        _pos.value = position.toFloat()
         MPVLib.command(arrayOf("seek", position.toString(), if (precise) "absolute" else "absolute+keyframes"))
         if (syncplayClient.isConnected.value && syncplayClient.isHost.value && !isRemoteSyncAction) {
             syncplayClient.sendPlayState(position.toDouble(), paused = paused.value, doSeek = true)
@@ -1190,6 +1230,11 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun changeEpisode(previous: Boolean, autoPlay: Boolean = false) {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value && !isRemoteSyncAction) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengganti episode") }
+            return
+        }
+
         if (previous && !hasPreviousEpisode.value) {
             activity.showToast(activity.stringResource(AYMR.strings.no_prev_episode))
             return
@@ -1207,6 +1252,10 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun handleLeftDoubleTap() {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengontrol pemutaran") }
+            return
+        }
         when (gesturePreferences.leftDoubleTapGesture().get()) {
             SingleActionGesture.Seek -> {
                 leftSeek()
@@ -1223,6 +1272,10 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun handleCenterDoubleTap() {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengontrol pemutaran") }
+            return
+        }
         when (gesturePreferences.centerDoubleTapGesture().get()) {
             SingleActionGesture.PlayPause -> {
                 pauseUnpause()
@@ -1237,6 +1290,10 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun handleRightDoubleTap() {
+        if (syncplayClient.isConnected.value && !syncplayClient.isHost.value) {
+            playerUpdate.update { PlayerUpdates.ShowText("Hanya Host yang dapat mengontrol pemutaran") }
+            return
+        }
         when (gesturePreferences.rightDoubleTapGesture().get()) {
             SingleActionGesture.Seek -> {
                 rightSeek()
@@ -2343,18 +2400,70 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun syncToHost() {
-        val hPos = hostPosition.value ?: return
-        val hTime = hostPositionTimestamp.value
-        val hPaused = hostIsPaused.value
-        val target = if (hPaused) {
-            hPos
-        } else {
-            val elapsed = (android.os.SystemClock.elapsedRealtime() - hTime) / 1000.0
-            hPos + elapsed
+        if (!syncplayClient.isConnected.value || syncplayClient.isHost.value) return
+        playerUpdate.update { PlayerUpdates.ShowText("Meminta timestamp ke Host...") }
+        syncplayClient.requestSyncFromHost()
+    }
+
+    private fun handleHostAnimeChanged(meta: WatchPartyAnimeMeta) {
+        val currentEp = currentEpisode.value
+        if (currentEp != null && currentEp.url == meta.episodeUrl) {
+            return
         }
-        seekTo(target.toInt(), precise = true)
-        isDesyncedFromHost.update { false }
-        playerUpdate.update { PlayerUpdates.ShowText("Menyinkronkan ke posisi host") }
+        viewModelScope.launchIO {
+            playerUpdate.update {
+                PlayerUpdates.ShowText("Host berpindah ke episode: ${meta.episodeName}")
+            }
+            val currentAn = currentAnime.value
+            if (currentAn != null && currentAn.url == meta.animeUrl) {
+                var targetEp = currentPlaylist.value.find { it.url == meta.episodeUrl }
+                    ?: currentPlaylist.value.find { it.episode_number == meta.episodeNumber.toFloat() }
+                if (targetEp == null) {
+                    updateAnimeFromRemote.awaitEpisodesUpdate(currentAn, fetchEpisodes = true)
+                    val refreshedList = getEpisodesByAnimeId.await(currentAn.id).map { it.toDbEpisode() }
+                    updateEpisodeList(refreshedList)
+                    targetEp = refreshedList.find { it.url == meta.episodeUrl }
+                        ?: refreshedList.find { it.episode_number == meta.episodeNumber.toFloat() }
+                }
+                if (targetEp != null) {
+                    isRemoteSyncAction = true
+                    withUIContext {
+                        activity.changeEpisode(targetEp.id)
+                    }
+                    delay(500)
+                    isRemoteSyncAction = false
+                }
+            } else {
+                val source = sourceManager.get(meta.sourceId) ?: return@launchIO
+                val anime = getAnimeByUrlAndSourceId.await(meta.animeUrl, meta.sourceId)
+                    ?: networkToLocalAnime.await(
+                        Anime.create().copy(
+                            url = meta.animeUrl,
+                            title = meta.animeTitle,
+                            source = meta.sourceId,
+                        ),
+                    )
+                var episode = getEpisodeByUrlAndAnimeId.await(meta.episodeUrl, anime.id)
+                if (episode == null) {
+                    val res = updateAnimeFromRemote.awaitEpisodesUpdate(anime, fetchEpisodes = true)
+                    if (res.isSuccess) {
+                        val newEps = res.getOrNull()?.newEpisodes ?: emptyList()
+                        episode = newEps.find { it.url == meta.episodeUrl }
+                            ?: newEps.find { it.episodeNumber == meta.episodeNumber }
+                    }
+                    if (episode == null) {
+                        episode = getEpisodeByUrlAndAnimeId.await(meta.episodeUrl, anime.id)
+                    }
+                }
+                if (episode != null) {
+                    withUIContext {
+                        val intent = PlayerActivity.newIntent(activity, anime.id, episode.id)
+                        activity.startActivity(intent)
+                        activity.finish()
+                    }
+                }
+            }
+        }
     }
 
     fun connectSyncplay(server: String, room: String, username: String, password: String?) {

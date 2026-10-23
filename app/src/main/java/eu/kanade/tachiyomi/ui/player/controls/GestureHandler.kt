@@ -179,7 +179,9 @@ fun GestureHandler(
                 )
             }
             .pointerInput(areControlsLocked) {
-                if (!seekGesture || areControlsLocked) return@pointerInput
+                val isPlaybackLocked = viewModel.syncplayClient.isConnected.value &&
+                    !viewModel.syncplayClient.isHost.value
+                if (!seekGesture || areControlsLocked || isPlaybackLocked) return@pointerInput
                 var startingPosition = position.toInt()
                 var startingX = 0f
                 var wasPlayerAlreadyPause = false

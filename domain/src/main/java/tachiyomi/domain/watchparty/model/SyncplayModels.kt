@@ -65,6 +65,15 @@ sealed interface SyncplayEvent {
     data class HostAnimeChanged(
         val meta: WatchPartyAnimeMeta,
     ) : SyncplayEvent
+
+    data class SyncRequested(
+        val requester: String,
+    ) : SyncplayEvent
+
+    data class SyncResponseReceived(
+        val position: Double,
+        val paused: Boolean,
+    ) : SyncplayEvent
 }
 
 data class WatchPartyAnimeMeta(

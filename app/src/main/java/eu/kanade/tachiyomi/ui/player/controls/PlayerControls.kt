@@ -358,10 +358,26 @@ fun PlayerControls(
                 ) {
                     val showLoadingCircle by playerPreferences.showLoadingCircle().collectAsState()
                     MiddlePlayerControls(
-                        hasPrevious = hasPreviousEpisode,
-                        onSkipPrevious = { viewModel.changeEpisode(true) },
-                        hasNext = hasNextEpisode,
-                        onSkipNext = { viewModel.changeEpisode(false) },
+                        hasPrevious = hasPreviousEpisode && !isPlaybackLocked,
+                        onSkipPrevious = {
+                            if (isPlaybackLocked) {
+                                viewModel.playerUpdate.update {
+                                    PlayerUpdates.ShowText("Hanya Host yang dapat mengganti episode")
+                                }
+                            } else {
+                                viewModel.changeEpisode(true)
+                            }
+                        },
+                        hasNext = hasNextEpisode && !isPlaybackLocked,
+                        onSkipNext = {
+                            if (isPlaybackLocked) {
+                                viewModel.playerUpdate.update {
+                                    PlayerUpdates.ShowText("Hanya Host yang dapat mengganti episode")
+                                }
+                            } else {
+                                viewModel.changeEpisode(false)
+                            }
+                        },
                         isLoading = isLoading,
                         isLoadingEpisode = isLoadingEpisode,
                         controlsShown = controlsShown,
@@ -539,8 +555,7 @@ fun PlayerControls(
                                 },
                             )
                         },
-                        isDesyncedFromHost = isDesyncedFromHost,
-                        desyncSeconds = desyncSeconds,
+                        isGuest = isWatchPartyConnected && !isHost,
                         onSyncToHost = viewModel::syncToHost,
                     )
                 }
@@ -699,7 +714,13 @@ fun PlayerControls(
             onFillermarkClicked = viewModel::fillermarkEpisode,
             onEpisodeClicked = {
                 viewModel.showDialog(Dialogs.None)
-                activity.changeEpisode(it)
+                if (isPlaybackLocked) {
+                    viewModel.playerUpdate.update {
+                        PlayerUpdates.ShowText("Hanya Host yang dapat mengganti episode")
+                    }
+                } else {
+                    activity.changeEpisode(it)
+                }
             },
             onDismissRequest = { viewModel.showDialog(Dialogs.None) },
         )

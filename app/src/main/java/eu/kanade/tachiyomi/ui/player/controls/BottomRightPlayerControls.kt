@@ -38,15 +38,14 @@ fun BottomRightPlayerControls(
     isPipAvailable: Boolean,
     onAspectClick: () -> Unit,
     onPipClick: () -> Unit,
-    isDesyncedFromHost: Boolean = false,
-    desyncSeconds: Long = 0,
+    isGuest: Boolean = false,
     onSyncToHost: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        if (isDesyncedFromHost) {
+        if (isGuest) {
             FilledControlsButton(
-                text = "Sync ke Host (-${desyncSeconds}s)",
+                text = "Sync",
                 onClick = onSyncToHost,
                 onLongClick = onSyncToHost,
             )

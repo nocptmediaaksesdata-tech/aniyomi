@@ -1000,6 +1000,15 @@ class PlayerActivity : BaseActivity() {
      * @param autoPlay whether the episode is switching due to auto play
      */
     internal fun changeEpisode(episodeId: Long?, autoPlay: Boolean = false) {
+        if (viewModel.syncplayClient.isConnected.value &&
+            !viewModel.syncplayClient.isHost.value &&
+            !viewModel.isRemoteSyncAction
+        ) {
+            viewModel.playerUpdate.update {
+                PlayerUpdates.ShowText("Hanya Host yang dapat mengganti episode")
+            }
+            return
+        }
         viewModel.sheetShown.update { _ -> Sheets.None }
         viewModel.panelShown.update { _ -> Panels.None }
         viewModel.pause()

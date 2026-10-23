@@ -266,12 +266,31 @@ class SyncplayClient {
                 handleStateUpdate(stateObj)
             }
 
-            // 5. Check Chat / System Message
+            // 5. Check Chat / System Message / Sync Request
             root["Chat"]?.jsonObject?.let { chatObj ->
                 val user = chatObj["username"]?.jsonPrimitive?.content ?: "Sistem"
                 val msg = chatObj["message"]?.jsonPrimitive?.content ?: ""
-                if (msg.isNotBlank()) {
-                    _events.emit(SyncplayEvent.ActionNotification("$user: $msg"))
+                when {
+                    msg.startsWith("SYNC_REQ:") -> {
+                        val requester = msg.removePrefix("SYNC_REQ:")
+                        if (_isHost.value) {
+                            _events.emit(SyncplayEvent.SyncRequested(requester))
+                        }
+                    }
+                    msg.startsWith("SYNC_RESP:") -> {
+                        val parts = msg.split(":")
+                        if (parts.size >= 4) {
+                            val targetUser = parts[1]
+                            val pos = parts[2].toDoubleOrNull() ?: 0.0
+                            val paused = parts[3].toBooleanStrictOrNull() ?: true
+                            if (targetUser == _currentUsername.value) {
+                                _events.emit(SyncplayEvent.SyncResponseReceived(pos, paused))
+                            }
+                        }
+                    }
+                    msg.isNotBlank() -> {
+                        _events.emit(SyncplayEvent.ActionNotification("$user: $msg"))
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -598,6 +617,17 @@ class SyncplayClient {
             }
         """.trimIndent().replace("\n", "")
         sendRawLine(fileJson)
+    }
+
+    fun requestSyncFromHost() {
+        val myUser = _currentUsername.value ?: return
+        val chatJson = """{"Chat": "SYNC_REQ:$myUser"}"""
+        sendRawLine(chatJson)
+    }
+
+    fun sendSyncResponse(requester: String, position: Double, paused: Boolean) {
+        val chatJson = """{"Chat": "SYNC_RESP:$requester:$position:$paused"}"""
+        sendRawLine(chatJson)
     }
 
     fun setFile(name: String, duration: Double, size: Long = 0L) {
