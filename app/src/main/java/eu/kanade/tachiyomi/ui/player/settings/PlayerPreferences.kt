@@ -80,6 +80,14 @@ class PlayerPreferences(
     fun invertDuration() = preferenceStore.getBoolean("invert_duration", false)
     fun aspectState() = preferenceStore.getEnum("pref_player_aspect_state", VideoAspect.Fit)
 
+    // Watch Party (Syncplay)
+
+    fun syncplayServer() = preferenceStore.getString("pref_syncplay_server", "syncplay.pl:8999")
+    fun syncplayUsername() = preferenceStore.getString("pref_syncplay_username", "")
+    fun syncplayLastRoom() = preferenceStore.getString("pref_syncplay_last_room", "")
+    fun syncplayPassword() = preferenceStore.getString("pref_syncplay_password", "")
+    fun syncplayHostOnly() = preferenceStore.getBoolean("pref_syncplay_host_only", false)
+
     // Old
 
     fun autoplayEnabled() = preferenceStore.getBoolean("pref_auto_play_enabled", false)

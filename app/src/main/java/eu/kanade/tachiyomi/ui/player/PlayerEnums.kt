@@ -105,6 +105,7 @@ enum class Sheets {
     Chapters,
     More,
     Screenshot,
+    WatchParty,
 }
 
 enum class Panels {

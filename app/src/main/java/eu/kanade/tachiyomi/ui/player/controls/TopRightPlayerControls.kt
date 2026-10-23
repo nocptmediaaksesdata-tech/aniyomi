@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Subtitles
@@ -30,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.ui.player.controls.components.AutoPlaySwitch
 import eu.kanade.tachiyomi.ui.player.controls.components.ControlsButton
@@ -57,6 +59,10 @@ fun TopRightPlayerControls(
     onMoreClick: () -> Unit,
     onMoreLongClick: () -> Unit,
 
+    // watch party
+    isWatchPartyConnected: Boolean = false,
+    onWatchPartyClick: () -> Unit = {},
+
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -70,6 +76,17 @@ fun TopRightPlayerControls(
             modifier = Modifier
                 .padding(vertical = MaterialTheme.padding.medium, horizontal = MaterialTheme.padding.mediumSmall)
                 .size(width = 48.dp, height = 24.dp),
+        )
+        ControlsButton(
+            icon = Icons.Default.Group,
+            onClick = onWatchPartyClick,
+            onLongClick = onWatchPartyClick,
+            color = if (isWatchPartyConnected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                Color.White
+            },
+            horizontalSpacing = MaterialTheme.padding.mediumSmall,
         )
         ControlsButton(
             icon = Icons.Default.Subtitles,

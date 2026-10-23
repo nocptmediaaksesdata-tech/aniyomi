@@ -29,6 +29,7 @@ import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.Settings
+import android.text.format.DateUtils
 import android.util.DisplayMetrics
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.Immutable
@@ -114,6 +115,7 @@ import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.data.watchparty.SyncplayClient
 import tachiyomi.domain.category.anime.interactor.GetAnimeCategories
 import tachiyomi.domain.custombuttons.interactor.GetCustomButtons
 import tachiyomi.domain.custombuttons.model.CustomButton
@@ -130,6 +132,10 @@ import tachiyomi.domain.items.episode.service.getEpisodeSort
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.source.anime.service.AnimeSourceManager
 import tachiyomi.domain.track.anime.interactor.GetAnimeTracks
+import tachiyomi.domain.watchparty.model.SyncplayEvent
+import tachiyomi.domain.watchparty.model.SyncplayPlayState
+import tachiyomi.domain.watchparty.model.SyncplayUser
+import tachiyomi.domain.watchparty.model.WatchPartyConfig
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.source.local.entries.anime.isLocal
@@ -175,7 +181,19 @@ class PlayerViewModel @JvmOverloads constructor(
     private val getIncognitoState: GetAnimeIncognitoState = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     uiPreferences: UiPreferences = Injekt.get(),
+    val syncplayClient: SyncplayClient = Injekt.get(),
 ) : ViewModel() {
+
+    var isRemoteSyncAction = false
+
+    val isWatchPartyConnected = syncplayClient.isConnected
+    val watchPartyRoom = syncplayClient.currentRoom
+    val watchPartyUsers = syncplayClient.users
+    val isHost = syncplayClient.isHost
+    val isHostOnly = MutableStateFlow(playerPreferences.syncplayHostOnly().get())
+    val hostPosition = MutableStateFlow<Double?>(null)
+    val isDesyncedFromHost = MutableStateFlow(false)
+    val desyncSeconds = MutableStateFlow(0L)
 
     private val _currentPlaylist = MutableStateFlow<List<Episode>>(emptyList())
     val currentPlaylist = _currentPlaylist.asStateFlow()
@@ -342,6 +360,42 @@ class PlayerViewModel @JvmOverloads constructor(
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e)
                 _customButtons.update { _ -> CustomButtonFetchState.Error(e.message ?: "Unable to fetch buttons") }
+            }
+        }
+
+        viewModelScope.launchIO {
+            syncplayClient.events.collect { event ->
+                when (event) {
+                    is SyncplayEvent.Connected -> {
+                        playerUpdate.update { PlayerUpdates.ShowText("Tersambung: ${event.room}") }
+                        updateSyncplayFile()
+                    }
+                    is SyncplayEvent.Disconnected -> {
+                        playerUpdate.update { PlayerUpdates.ShowText("Terputus dari Watch Party") }
+                        hostPosition.update { null }
+                        isDesyncedFromHost.update { false }
+                    }
+                    is SyncplayEvent.UserJoined -> {
+                        playerUpdate.update { PlayerUpdates.ShowText("${event.username} bergabung") }
+                    }
+                    is SyncplayEvent.UserLeft -> {
+                        playerUpdate.update { PlayerUpdates.ShowText("${event.username} keluar") }
+                    }
+                    is SyncplayEvent.FileMismatch -> {
+                        playerUpdate.update {
+                            PlayerUpdates.ShowText("Perhatian: ${event.username} menonton file/kualitas berbeda!")
+                        }
+                    }
+                    is SyncplayEvent.ActionNotification -> {
+                        playerUpdate.update { PlayerUpdates.ShowText(event.message) }
+                    }
+                    is SyncplayEvent.PlayStateChanged -> {
+                        handleRemotePlayState(event.playstate)
+                    }
+                    is SyncplayEvent.UserListUpdated -> {
+                        // User list updated
+                    }
+                }
             }
         }
     }
@@ -567,6 +621,61 @@ class PlayerViewModel @JvmOverloads constructor(
     fun updatePlayBackPos(pos: Float) {
         onSecondReached(pos.toInt(), duration.value.toInt())
         _pos.update { pos }
+        syncplayClient.updateLocalPlayback(pos.toDouble(), paused.value)
+        checkDesync(pos.toDouble())
+    }
+
+    private fun checkDesync(currentPos: Double) {
+        val hostPos = hostPosition.value
+        if (syncplayClient.isConnected.value && hostPos != null && !paused.value) {
+            val diff = hostPos - currentPos
+            if (kotlin.math.abs(diff) > 3.0) {
+                isDesyncedFromHost.update { true }
+                desyncSeconds.update { kotlin.math.abs(diff).toLong() }
+            } else {
+                isDesyncedFromHost.update { false }
+            }
+        } else {
+            isDesyncedFromHost.update { false }
+        }
+    }
+
+    private fun handleRemotePlayState(playstate: SyncplayPlayState) {
+        val myUsername = syncplayClient.currentUsername.value
+        if (playstate.setBy != null && playstate.setBy == myUsername) return
+
+        if (isHostOnly.value && playstate.setBy != null) {
+            val hostUser = syncplayClient.users.value.firstOrNull { it.isHost }
+            if (hostUser != null && playstate.setBy != hostUser.username) {
+                return
+            }
+        }
+
+        hostPosition.update { playstate.position }
+
+        val who = playstate.setBy ?: "Anggota"
+
+        if (playstate.doSeek) {
+            isRemoteSyncAction = true
+            seekTo(playstate.position.toInt(), precise = true)
+            isRemoteSyncAction = false
+            val timeStr = DateUtils.formatElapsedTime(playstate.position.toLong())
+            playerUpdate.update { PlayerUpdates.ShowText("$who melompat ke $timeStr") }
+        }
+
+        if (playstate.paused != paused.value) {
+            isRemoteSyncAction = true
+            if (playstate.paused) {
+                activity.player.paused = true
+                _paused.update { true }
+                playerUpdate.update { PlayerUpdates.ShowText("$who menjeda video") }
+            } else {
+                activity.player.paused = false
+                _paused.update { false }
+                playerUpdate.update { PlayerUpdates.ShowText("$who melanjutkan video") }
+            }
+            isRemoteSyncAction = false
+        }
     }
 
     private var lastThumbnailFetch = 0L
@@ -655,11 +764,21 @@ class PlayerViewModel @JvmOverloads constructor(
         runCatching {
             activity.setPictureInPictureParams(activity.createPipParams())
         }
+        if (syncplayClient.isConnected.value && !isRemoteSyncAction) {
+            if (!isHostOnly.value || syncplayClient.isHost.value) {
+                syncplayClient.sendPlayState(pos.value.toDouble(), paused = true)
+            }
+        }
     }
 
     fun unpause() {
         activity.player.paused = false
         _paused.update { false }
+        if (syncplayClient.isConnected.value && !isRemoteSyncAction) {
+            if (!isHostOnly.value || syncplayClient.isHost.value) {
+                syncplayClient.sendPlayState(pos.value.toDouble(), paused = false)
+            }
+        }
     }
 
     private val showStatusBar = playerPreferences.showSystemStatusBar().get()
@@ -747,6 +866,11 @@ class PlayerViewModel @JvmOverloads constructor(
     fun seekTo(position: Int, precise: Boolean = true) {
         if (position !in 0..(activity.player.duration ?: 0)) return
         MPVLib.command(arrayOf("seek", position.toString(), if (precise) "absolute" else "absolute+keyframes"))
+        if (syncplayClient.isConnected.value && !isRemoteSyncAction) {
+            if (!isHostOnly.value || syncplayClient.isHost.value) {
+                syncplayClient.sendPlayState(position.toDouble(), paused = paused.value, doSeek = true)
+            }
+        }
     }
 
     fun changeBrightnessTo(
@@ -2155,6 +2279,62 @@ class PlayerViewModel @JvmOverloads constructor(
 
     fun setPrimaryCustomButtonTitle(button: CustomButton) {
         _primaryButtonTitle.update { _ -> button.name }
+    }
+
+    fun updateSyncplayFile() {
+        val anime = currentAnime.value ?: return
+        val episode = currentEpisode.value ?: return
+        val source = currentSource.value
+        val video = currentVideo.value
+        val quality = video?.quality ?: "Default"
+        val sourceName = source?.name ?: "Local"
+        val dur = duration.value.toDouble()
+
+        val fileName = "${anime.title} - Ep ${episode.episodeNumber} [$sourceName|$quality]"
+        syncplayClient.setFile(fileName, dur)
+    }
+
+    fun syncToHost() {
+        val target = hostPosition.value ?: return
+        seekTo(target.toInt(), precise = true)
+        isDesyncedFromHost.update { false }
+        playerUpdate.update { PlayerUpdates.ShowText("Menyinkronkan ke posisi host") }
+    }
+
+    fun connectSyncplay(server: String, room: String, username: String, password: String?) {
+        viewModelScope.launchIO {
+            val parts = server.split(":")
+            val host = parts[0]
+            val port = parts.getOrNull(1)?.toIntOrNull() ?: 8999
+            playerPreferences.syncplayServer().set(server)
+            playerPreferences.syncplayLastRoom().set(room)
+            playerPreferences.syncplayUsername().set(username)
+            if (password != null) playerPreferences.syncplayPassword().set(password)
+
+            val config = WatchPartyConfig(
+                serverHost = host,
+                serverPort = port,
+                roomName = room,
+                username = username,
+                password = password.takeIf { !it.isNullOrBlank() },
+                isHostOnly = isHostOnly.value,
+            )
+            syncplayClient.connect(config)
+        }
+    }
+
+    fun disconnectSyncplay() {
+        syncplayClient.disconnect()
+        hostPosition.update { null }
+        isDesyncedFromHost.update { false }
+    }
+
+    fun toggleHostOnly(hostOnly: Boolean) {
+        isHostOnly.update { hostOnly }
+        playerPreferences.syncplayHostOnly().set(hostOnly)
+        playerUpdate.update {
+            PlayerUpdates.ShowText(if (hostOnly) "Mode: Hanya Host yang mengontrol" else "Mode: Bebas mengontrol")
+        }
     }
 
     sealed class Event {

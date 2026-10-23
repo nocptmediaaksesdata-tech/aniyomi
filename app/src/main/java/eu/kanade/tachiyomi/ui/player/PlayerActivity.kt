@@ -317,6 +317,7 @@ class PlayerActivity : BaseActivity() {
 
         MPVLib.removeLogObserver(playerObserver)
         MPVLib.removeObserver(playerObserver)
+        viewModel.disconnectSyncplay()
         player.destroy()
 
         super.onDestroy()
@@ -1305,6 +1306,7 @@ class PlayerActivity : BaseActivity() {
                 }
             }
         }
+        viewModel.updateSyncplayFile()
     }
 
     private fun setMpvOptions() {

@@ -127,6 +127,14 @@ fun PlayerControls(
     val customButtons by viewModel.customButtons.collectAsState()
     val customButton by viewModel.primaryButton.collectAsState()
 
+    val isWatchPartyConnected by viewModel.isWatchPartyConnected.collectAsState()
+    val isDesyncedFromHost by viewModel.isDesyncedFromHost.collectAsState()
+    val desyncSeconds by viewModel.desyncSeconds.collectAsState()
+    val watchPartyRoom by viewModel.watchPartyRoom.collectAsState()
+    val watchPartyUsers by viewModel.watchPartyUsers.collectAsState()
+    val isHost by viewModel.isHost.collectAsState()
+    val isHostOnly by viewModel.isHostOnly.collectAsState()
+
     val chapters = remember(indexedChapters) {
         indexedChapters.map { it.toSegment() }.toImmutableList()
     }
@@ -473,6 +481,8 @@ fun PlayerControls(
                         isEpisodeOnline = isEpisodeOnline,
                         onMoreClick = { viewModel.showSheet(Sheets.More) },
                         onMoreLongClick = { viewModel.showPanel(Panels.VideoFilters) },
+                        isWatchPartyConnected = isWatchPartyConnected,
+                        onWatchPartyClick = { viewModel.showSheet(Sheets.WatchParty) },
                     )
                 }
                 // Bottom right controls
@@ -518,6 +528,9 @@ fun PlayerControls(
                                 },
                             )
                         },
+                        isDesyncedFromHost = isDesyncedFromHost,
+                        desyncSeconds = desyncSeconds,
+                        onSyncToHost = viewModel::syncToHost,
                     )
                 }
                 // Bottom left controls
@@ -634,6 +647,21 @@ fun PlayerControls(
                 viewModel.showSheet(Sheets.None)
                 viewModel.unpause()
             },
+
+            isWatchPartyConnected = isWatchPartyConnected,
+            watchPartyRoom = watchPartyRoom,
+            watchPartyUsers = watchPartyUsers.toImmutableList(),
+            isHost = isHost,
+            isHostOnly = isHostOnly,
+            currentFileName = viewModel.syncplayClient.currentFile.collectAsState().value?.name,
+            initialSyncplayServer = viewModel.playerPreferences.syncplayServer().get(),
+            initialSyncplayUsername = viewModel.playerPreferences.syncplayUsername().get(),
+            initialSyncplayRoom = viewModel.playerPreferences.syncplayLastRoom().get(),
+            initialSyncplayPassword = viewModel.playerPreferences.syncplayPassword().get(),
+            onConnectSyncplay = viewModel::connectSyncplay,
+            onDisconnectSyncplay = viewModel::disconnectSyncplay,
+            onToggleHostOnly = viewModel::toggleHostOnly,
+
             onOpenPanel = viewModel::showPanel,
             onDismissRequest = { viewModel.showSheet(Sheets.None) },
             dismissSheet = dismissSheet,

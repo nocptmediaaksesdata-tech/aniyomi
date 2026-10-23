@@ -35,9 +35,12 @@ import eu.kanade.tachiyomi.ui.player.controls.components.sheets.PlaybackSpeedShe
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.QualitySheet
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.ScreenshotSheet
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.SubtitlesSheet
+import eu.kanade.tachiyomi.ui.player.controls.components.sheets.WatchPartySheet
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import tachiyomi.domain.custombuttons.model.CustomButton
+import tachiyomi.domain.watchparty.model.SyncplayUser
 import java.io.InputStream
 
 @Composable
@@ -93,6 +96,21 @@ fun PlayerSheets(
     onSave: (() -> InputStream) -> Unit,
     takeScreenshot: (String, Boolean) -> InputStream?,
     onDismissScreenshot: () -> Unit,
+
+    // Watch Party sheet
+    isWatchPartyConnected: Boolean = false,
+    watchPartyRoom: String? = null,
+    watchPartyUsers: ImmutableList<SyncplayUser> = persistentListOf(),
+    isHost: Boolean = false,
+    isHostOnly: Boolean = false,
+    currentFileName: String? = null,
+    initialSyncplayServer: String = "",
+    initialSyncplayUsername: String = "",
+    initialSyncplayRoom: String = "",
+    initialSyncplayPassword: String = "",
+    onConnectSyncplay: (server: String, room: String, username: String, password: String?) -> Unit = { _, _, _, _ -> },
+    onDisconnectSyncplay: () -> Unit = {},
+    onToggleHostOnly: (Boolean) -> Unit = {},
 
     onOpenPanel: (Panels) -> Unit,
     onDismissRequest: () -> Unit,
@@ -192,6 +210,25 @@ fun PlayerSheets(
                 onSave = onSave,
                 takeScreenshot = takeScreenshot,
                 onDismissRequest = onDismissScreenshot,
+            )
+        }
+
+        Sheets.WatchParty -> {
+            WatchPartySheet(
+                isConnected = isWatchPartyConnected,
+                roomName = watchPartyRoom,
+                users = watchPartyUsers,
+                isHost = isHost,
+                isHostOnly = isHostOnly,
+                currentFileName = currentFileName,
+                initialServer = initialSyncplayServer,
+                initialUsername = initialSyncplayUsername,
+                initialRoom = initialSyncplayRoom,
+                initialPassword = initialSyncplayPassword,
+                onConnect = onConnectSyncplay,
+                onDisconnect = onDisconnectSyncplay,
+                onToggleHostOnly = onToggleHostOnly,
+                onDismissRequest = onDismissRequest,
             )
         }
     }
