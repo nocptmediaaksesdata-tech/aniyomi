@@ -30,12 +30,37 @@ Discover and watch anime, cartoons, series, and more – easier than ever on you
 * Local reading and watching of content.
 * A configurable reader with multiple viewers, reading directions and other settings.
 * A configurable player built on mpv-android with multiple options and settings.
+* Watch Party (Syncplay): Synchronized playback with friends using public or self-hosted Syncplay servers.
 * Tracker support: [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://mangaupdates.com), [Shikimori](https://shikimori.one), [Simkl](https://simkl.com/), and [Bangumi](https://bgm.tv/) support.
 * Categories to organize your library.
 * Light and dark themes.
 * Schedule updating your library for new chapters/episodes.
 * Create backups locally to read/watch offline or to your desired cloud service.
 * Plus much more...
+
+</div>
+
+## Watch Party (Syncplay)
+
+<div align="left">
+
+This fork integrates the [Syncplay](https://syncplay.pl/) protocol directly into the video player, allowing synchronized watching sessions with friends across devices.
+
+### How to use
+
+1. Start playing any video in the player.
+2. Tap the group icon in the top right controls to open the Watch Party panel.
+3. Configure your server (default: `syncplay.pl:8999`), username, room name, and optional password.
+4. Tap **Join / Create Room**.
+5. Once connected, play, pause, and seek actions synchronize across all viewers in the room.
+
+### Key capabilities
+
+* **Compatible protocol**: Connects to official Syncplay public servers or private self-hosted instances over TLS/TCP.
+* **Control modes**: Toggle between shared control (anyone can control playback) and host-only mode.
+* **Smart desync handling**: Non-intrusive playback that does not freeze or stutter during network latency, with a one-tap **Sync to Host** action if you drift behind.
+* **File and episode validation**: Automatically checks if participants are watching the same source, episode, and stream quality.
+* **On-screen notifications**: Clean overlay toasts displaying remote user actions without obstructing the video.
 
 </div>
 
