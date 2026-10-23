@@ -2290,7 +2290,7 @@ class PlayerViewModel @JvmOverloads constructor(
         val sourceName = source?.name ?: "Local"
         val dur = duration.value.toDouble()
 
-        val fileName = "${anime.title} - Ep ${episode.episodeNumber} [$sourceName|$quality]"
+        val fileName = "${anime.title} - Ep ${episode.episode_number} [$sourceName|$quality]"
         syncplayClient.setFile(fileName, dur)
     }
 
