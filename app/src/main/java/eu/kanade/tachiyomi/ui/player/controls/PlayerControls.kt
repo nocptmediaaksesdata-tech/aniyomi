@@ -25,6 +25,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -72,6 +74,8 @@ import eu.kanade.tachiyomi.ui.player.controls.components.SeekbarWithTimers
 import eu.kanade.tachiyomi.ui.player.controls.components.TextPlayerUpdate
 import eu.kanade.tachiyomi.ui.player.controls.components.ThumbnailPreview
 import eu.kanade.tachiyomi.ui.player.controls.components.VolumeSlider
+import eu.kanade.tachiyomi.ui.player.controls.components.WatchPartyReactionBar
+import eu.kanade.tachiyomi.ui.player.controls.components.WatchPartyReactionsOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.toFixed
 import eu.kanade.tachiyomi.ui.player.settings.AudioPreferences
 import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
@@ -123,6 +127,13 @@ fun PlayerControls(
 
     val playerTimeToDisappear by playerPreferences.playerTimeToDisappear().collectAsState()
     var resetControls by remember { mutableStateOf(true) }
+    var isReactionBarShown by remember { mutableStateOf(false) }
+
+    LaunchedEffect(controlsShown) {
+        if (!controlsShown) {
+            isReactionBarShown = false
+        }
+    }
 
     val customButtons by viewModel.customButtons.collectAsState()
     val customButton by viewModel.primaryButton.collectAsState()
@@ -191,6 +202,7 @@ fun PlayerControls(
                 val centerControls = createRef()
                 val thumbnail = createRef()
                 val seekbar = createRef()
+                val reactionBar = createRef()
                 val (playerUpdates) = createRefs()
 
                 val hasPreviousEpisode by viewModel.hasPreviousEpisode.collectAsState()
@@ -512,6 +524,26 @@ fun PlayerControls(
                         onWatchPartyClick = { viewModel.showSheet(Sheets.WatchParty) },
                     )
                 }
+                // Watch party reaction bar
+                AnimatedVisibility(
+                    isReactionBarShown && controlsShown && !areControlsLocked,
+                    enter = fadeIn(playerControlsEnterAnimationSpec()) +
+                        scaleIn(playerControlsEnterAnimationSpec(), initialScale = 0.8f),
+                    exit = fadeOut(playerControlsExitAnimationSpec()) +
+                        scaleOut(playerControlsExitAnimationSpec(), targetScale = 0.8f),
+                    modifier = Modifier.constrainAs(reactionBar) {
+                        bottom.linkTo(bottomRightControls.top, spacing.extraSmall)
+                        end.linkTo(bottomRightControls.end)
+                    },
+                ) {
+                    WatchPartyReactionBar(
+                        onSelectReaction = { emoji ->
+                            resetControls = !resetControls
+                            viewModel.sendReaction(emoji)
+                        },
+                    )
+                }
+
                 // Bottom right controls
                 val skipIntroButton by viewModel.skipIntroText.collectAsState()
                 val customButtonTitle by viewModel.primaryButtonTitle.collectAsState()
@@ -557,6 +589,12 @@ fun PlayerControls(
                         },
                         isGuest = isWatchPartyConnected && !isHost,
                         onSyncToHost = viewModel::syncToHost,
+                        isWatchPartyConnected = isWatchPartyConnected,
+                        isReactionBarShown = isReactionBarShown,
+                        onToggleReactionBar = {
+                            resetControls = !resetControls
+                            isReactionBarShown = !isReactionBarShown
+                        },
                     )
                 }
                 // Bottom left controls
@@ -723,6 +761,11 @@ fun PlayerControls(
                 }
             },
             onDismissRequest = { viewModel.showDialog(Dialogs.None) },
+        )
+
+        WatchPartyReactionsOverlay(
+            reactions = viewModel.floatingReactions.collectAsState().value,
+            onReactionDismiss = viewModel::removeFloatingReaction,
         )
 
         BrightnessOverlay(

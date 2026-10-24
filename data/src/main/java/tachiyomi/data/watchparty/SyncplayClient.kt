@@ -314,6 +314,12 @@ class SyncplayClient {
                             recalculateUserList()
                         }
                     }
+                    msg.startsWith("REACTION:") -> {
+                        val emoji = msg.removePrefix("REACTION:")
+                        if (emoji.isNotBlank()) {
+                            _events.emit(SyncplayEvent.ReactionReceived(username = user, reaction = emoji))
+                        }
+                    }
                     msg.isNotBlank() -> {
                         _events.emit(SyncplayEvent.ActionNotification("$user: $msg"))
                     }
@@ -702,6 +708,11 @@ class SyncplayClient {
         val escapedRequester = requester.escapeJson()
         val chatJson = """{"Chat": "SYNC_RESP:$escapedRequester:$position:$paused"}"""
         sendRawLine(chatJson)
+    }
+
+    fun sendReaction(reaction: String) {
+        val escaped = reaction.escapeJson()
+        sendRawLine("""{"Chat": "REACTION:$escaped"}""")
     }
 
     fun setFile(name: String, duration: Double, size: Long = 0L) {

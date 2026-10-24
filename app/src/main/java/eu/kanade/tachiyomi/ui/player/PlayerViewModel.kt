@@ -141,6 +141,7 @@ import tachiyomi.domain.watchparty.model.SyncplayPlayState
 import tachiyomi.domain.watchparty.model.SyncplayUser
 import tachiyomi.domain.watchparty.model.WatchPartyAnimeMeta
 import tachiyomi.domain.watchparty.model.WatchPartyConfig
+import tachiyomi.domain.watchparty.model.WatchPartyReaction
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.aniyomi.AYMR
 import tachiyomi.source.local.entries.anime.isLocal
@@ -151,6 +152,7 @@ import java.io.InputStream
 import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
 
 class PlayerViewModelProviderFactory(
@@ -205,6 +207,9 @@ class PlayerViewModel @JvmOverloads constructor(
     val hostIsPaused = MutableStateFlow<Boolean>(true)
     val isDesyncedFromHost = MutableStateFlow(false)
     val desyncSeconds = MutableStateFlow(0L)
+    val floatingReactions = MutableStateFlow<List<WatchPartyReaction>>(emptyList())
+    private var reactionIdCounter = 0L
+    private var lastReactionSentTime = 0L
 
     private val _currentPlaylist = MutableStateFlow<List<Episode>>(emptyList())
     val currentPlaylist = _currentPlaylist.asStateFlow()
@@ -391,6 +396,7 @@ class PlayerViewModel @JvmOverloads constructor(
                         hostPositionTimestamp.update { 0L }
                         hostIsPaused.update { true }
                         isDesyncedFromHost.update { false }
+                        floatingReactions.update { emptyList() }
                     }
                     is SyncplayEvent.UserJoined -> {
                         playerUpdate.update { PlayerUpdates.ShowText("${event.username} bergabung") }
@@ -438,6 +444,14 @@ class PlayerViewModel @JvmOverloads constructor(
                             playerUpdate.update {
                                 PlayerUpdates.ShowText("Tersinkronisasi ke posisi Host ($pretty)")
                             }
+                        }
+                    }
+                    is SyncplayEvent.ReactionReceived -> {
+                        val id = ++reactionIdCounter
+                        val randomOffset = (Random.nextFloat() * 72f) - 36f
+                        floatingReactions.update { current ->
+                            (current + WatchPartyReaction(id, event.username, event.reaction, randomOffset))
+                                .takeLast(20)
                         }
                     }
                 }
@@ -2412,6 +2426,18 @@ class PlayerViewModel @JvmOverloads constructor(
         syncplayClient.requestSyncFromHost()
     }
 
+    fun sendReaction(emoji: String) {
+        if (!syncplayClient.isConnected.value) return
+        val now = System.currentTimeMillis()
+        if (now - lastReactionSentTime < 200) return
+        lastReactionSentTime = now
+        syncplayClient.sendReaction(emoji)
+    }
+
+    fun removeFloatingReaction(id: Long) {
+        floatingReactions.update { list -> list.filterNot { it.id == id } }
+    }
+
     private fun handleHostAnimeChanged(meta: WatchPartyAnimeMeta) {
         val currentEp = currentEpisode.value
         if (currentEp != null && currentEp.url == meta.episodeUrl) {
@@ -2520,6 +2546,7 @@ class PlayerViewModel @JvmOverloads constructor(
         hostPositionTimestamp.update { 0L }
         hostIsPaused.update { true }
         isDesyncedFromHost.update { false }
+        floatingReactions.update { emptyList() }
     }
 
     fun toggleHostOnly(hostOnly: Boolean) {

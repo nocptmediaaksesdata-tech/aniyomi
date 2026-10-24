@@ -20,9 +20,12 @@ package eu.kanade.tachiyomi.ui.player.controls
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import eu.kanade.tachiyomi.ui.player.controls.components.ControlsButton
 import eu.kanade.tachiyomi.ui.player.controls.components.FilledControlsButton
 import eu.kanade.tachiyomi.ui.player.execute
@@ -40,6 +43,9 @@ fun BottomRightPlayerControls(
     onPipClick: () -> Unit,
     isGuest: Boolean = false,
     onSyncToHost: () -> Unit = {},
+    isWatchPartyConnected: Boolean = false,
+    isReactionBarShown: Boolean = false,
+    onToggleReactionBar: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -61,6 +67,15 @@ fun BottomRightPlayerControls(
                 text = customButtonTitle,
                 onClick = customButton::execute,
                 onLongClick = customButton::executeLongPress,
+            )
+        }
+
+        if (isWatchPartyConnected) {
+            ControlsButton(
+                icon = Icons.Default.Favorite,
+                onClick = onToggleReactionBar,
+                onLongClick = onToggleReactionBar,
+                color = if (isReactionBarShown) MaterialTheme.colorScheme.primary else Color.White,
             )
         }
 

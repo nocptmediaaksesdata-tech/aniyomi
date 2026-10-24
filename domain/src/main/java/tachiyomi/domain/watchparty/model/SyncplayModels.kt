@@ -74,7 +74,19 @@ sealed interface SyncplayEvent {
         val position: Double,
         val paused: Boolean,
     ) : SyncplayEvent
+
+    data class ReactionReceived(
+        val username: String,
+        val reaction: String,
+    ) : SyncplayEvent
 }
+
+data class WatchPartyReaction(
+    val id: Long,
+    val username: String,
+    val emoji: String,
+    val randomOffsetX: Float,
+) : Serializable
 
 data class WatchPartyAnimeMeta(
     val animeTitle: String,
