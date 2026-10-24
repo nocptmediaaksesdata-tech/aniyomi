@@ -2441,7 +2441,13 @@ class PlayerViewModel @JvmOverloads constructor(
                     isRemoteSyncAction = false
                 }
             } else {
-                val source = sourceManager.get(meta.sourceId) ?: return@launchIO
+                val source = sourceManager.get(meta.sourceId)
+                if (source == null) {
+                    playerUpdate.update {
+                        PlayerUpdates.ShowText("Sumber anime '${meta.sourceName}' belum terpasang di perangkat Anda")
+                    }
+                    return@launchIO
+                }
                 val anime = getAnimeByUrlAndSourceId.await(meta.animeUrl, meta.sourceId)
                     ?: networkToLocalAnime.await(
                         Anime.create().copy(
@@ -2467,6 +2473,12 @@ class PlayerViewModel @JvmOverloads constructor(
                         val intent = PlayerActivity.newIntent(activity, anime.id, episode.id)
                         activity.startActivity(intent)
                         activity.finish()
+                    }
+                } else {
+                    playerUpdate.update {
+                        PlayerUpdates.ShowText(
+                            "Episode '${meta.episodeName}' tidak ditemukan di sumber '${meta.sourceName}'",
+                        )
                     }
                 }
             }
