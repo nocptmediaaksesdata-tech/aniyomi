@@ -128,6 +128,13 @@ class SyncplayClient {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    private fun String.escapeJson(): String =
+        replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+
     suspend fun connect(config: WatchPartyConfig): Result<Unit> = withContext(Dispatchers.IO) {
         disconnect("Memulai koneksi baru")
 
@@ -155,8 +162,8 @@ class SyncplayClient {
             val helloJson = """
                 {
                     "Hello": {
-                        "username": "${config.username.replace("\"", "\\\"")}",
-                        "room": {"name": "${config.roomName.replace("\"", "\\\"")}"},
+                        "username": "${config.username.escapeJson()}",
+                        "room": {"name": "${config.roomName.escapeJson()}"},
                         "version": "1.2.255",
                         "realversion": "1.7.3",
                         "features": {
@@ -640,11 +647,11 @@ class SyncplayClient {
         size: Long,
         meta: WatchPartyAnimeMeta,
     ) {
-        val escapedName = name.replace("\"", "\\\"")
-        val escapedTitle = meta.animeTitle.replace("\"", "\\\"")
-        val escapedAnimeUrl = meta.animeUrl.replace("\"", "\\\"")
-        val escapedEpUrl = meta.episodeUrl.replace("\"", "\\\"")
-        val escapedSourceName = meta.sourceName.replace("\"", "\\\"")
+        val escapedName = name.escapeJson()
+        val escapedTitle = meta.animeTitle.escapeJson()
+        val escapedAnimeUrl = meta.animeUrl.escapeJson()
+        val escapedEpUrl = meta.episodeUrl.escapeJson()
+        val escapedSourceName = meta.sourceName.escapeJson()
 
         val fileJson = """
             {
@@ -681,18 +688,19 @@ class SyncplayClient {
     }
 
     fun sendChat(message: String) {
-        val escaped = message.replace("\"", "\\\"")
+        val escaped = message.escapeJson()
         sendRawLine("""{"Chat": "$escaped"}""")
     }
 
     fun requestSyncFromHost() {
-        val myUser = _currentUsername.value ?: return
+        val myUser = _currentUsername.value?.escapeJson() ?: return
         val chatJson = """{"Chat": "SYNC_REQ:$myUser"}"""
         sendRawLine(chatJson)
     }
 
     fun sendSyncResponse(requester: String, position: Double, paused: Boolean) {
-        val chatJson = """{"Chat": "SYNC_RESP:$requester:$position:$paused"}"""
+        val escapedRequester = requester.escapeJson()
+        val chatJson = """{"Chat": "SYNC_RESP:$escapedRequester:$position:$paused"}"""
         sendRawLine(chatJson)
     }
 
@@ -705,7 +713,7 @@ class SyncplayClient {
     }
 
     private fun sendSetFile(name: String, duration: Double, size: Long) {
-        val escapedName = name.replace("\"", "\\\"")
+        val escapedName = name.escapeJson()
         val fileJson = """
             {
                 "Set": {
