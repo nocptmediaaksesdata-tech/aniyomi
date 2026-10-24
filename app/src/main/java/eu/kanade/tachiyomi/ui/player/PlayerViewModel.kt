@@ -289,6 +289,7 @@ class PlayerViewModel @JvmOverloads constructor(
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Bitmap>?) = size > 3
         }
     private var thumbnailFetchJob: Job? = null
+    private var autoSyncJob: Job? = null
 
     val duration = MutableStateFlow(0f)
 
@@ -2396,6 +2397,12 @@ class PlayerViewModel @JvmOverloads constructor(
                 episodeUrl = episode.url,
                 episodeNumber = episode.episode_number.toDouble(),
             )
+        } else if (syncplayClient.isConnected.value) {
+            autoSyncJob?.cancel()
+            autoSyncJob = viewModelScope.launchIO {
+                delay(400)
+                syncToHost()
+            }
         }
     }
 
