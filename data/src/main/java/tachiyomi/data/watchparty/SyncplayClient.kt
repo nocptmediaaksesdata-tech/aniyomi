@@ -85,6 +85,12 @@ class SyncplayClient {
     private val _isHost = MutableStateFlow(false)
     val isHost: StateFlow<Boolean> = _isHost.asStateFlow()
 
+    @Volatile
+    private var isConfiguredHost: Boolean = false
+
+    @Volatile
+    private var knownHostUsername: String? = null
+
     private val _hostAnimeMeta = MutableStateFlow<WatchPartyAnimeMeta?>(null)
     val hostAnimeMeta: StateFlow<WatchPartyAnimeMeta?> = _hostAnimeMeta.asStateFlow()
 
@@ -137,6 +143,9 @@ class SyncplayClient {
 
             _currentRoom.value = config.roomName
             _currentUsername.value = config.username
+            isConfiguredHost = config.isHost
+            _isHost.value = config.isHost
+            knownHostUsername = if (config.isHost) config.username else null
             userMap.clear()
             _users.value = emptyList()
 
@@ -244,6 +253,9 @@ class SyncplayClient {
 
                 // Request user list & resend file if set
                 sendRawLine("""{"List": null}""")
+                if (isConfiguredHost) {
+                    sendChat("HOST_ANNOUNCE:${config.username}")
+                }
                 currentFile.value?.let { file ->
                     sendSetFile(file.name, file.duration, file.size)
                 }
@@ -288,6 +300,13 @@ class SyncplayClient {
                             }
                         }
                     }
+                    msg.startsWith("HOST_ANNOUNCE:") -> {
+                        val hostUser = msg.removePrefix("HOST_ANNOUNCE:").trim()
+                        if (hostUser.isNotBlank() && knownHostUsername != hostUser) {
+                            knownHostUsername = hostUser
+                            recalculateUserList()
+                        }
+                    }
                     msg.isNotBlank() -> {
                         _events.emit(SyncplayEvent.ActionNotification("$user: $msg"))
                     }
@@ -317,6 +336,9 @@ class SyncplayClient {
                 if (userMap.remove(username) != null) {
                     _events.emit(SyncplayEvent.UserLeft(username))
                 }
+                if (username == knownHostUsername) {
+                    knownHostUsername = null
+                }
                 continue
             }
 
@@ -333,9 +355,18 @@ class SyncplayClient {
             val fileName = fileObj?.get("name")?.jsonPrimitive?.content
             val fileDuration = fileObj?.get("duration")?.jsonPrimitive?.doubleOrNull ?: 0.0
             val fileSize = fileObj?.get("size")?.jsonPrimitive?.longOrNull ?: 0L
+            val isController = userEntry["controller"]?.jsonPrimitive?.booleanOrNull ?: false
+
+            if (isController || fileObj?.get("animeTitle") != null) {
+                knownHostUsername = username
+            }
 
             val existing = userMap[username]
             val isNewlyJoined = existing == null && username != config.username
+
+            val isUserHost = (username == knownHostUsername) ||
+                (isConfiguredHost && username == _currentUsername.value) ||
+                isController
 
             val updatedUser = SyncplayUser(
                 username = username,
@@ -344,12 +375,28 @@ class SyncplayClient {
                 fileDuration = fileDuration,
                 fileSize = fileSize,
                 isReady = true,
-                isHost = userMap.isEmpty() || existing?.isHost == true,
+                isHost = isUserHost,
             )
             userMap[username] = updatedUser
 
             if (isNewlyJoined) {
                 _events.emit(SyncplayEvent.UserJoined(username))
+                if (isConfiguredHost) {
+                    sendChat("HOST_ANNOUNCE:${_currentUsername.value}")
+                    _hostAnimeMeta.value?.let { meta ->
+                        setAnimeEpisode(
+                            name = meta.episodeName,
+                            duration = currentFile.value?.duration ?: 0.0,
+                            size = currentFile.value?.size ?: 0L,
+                            animeTitle = meta.animeTitle,
+                            animeUrl = meta.animeUrl,
+                            sourceId = meta.sourceId,
+                            sourceName = meta.sourceName,
+                            episodeUrl = meta.episodeUrl,
+                            episodeNumber = meta.episodeNumber,
+                        )
+                    }
+                }
             }
 
             // Parse Anime metadata if sent by host
@@ -363,11 +410,9 @@ class SyncplayClient {
             }
         }
 
-        // Host determination: The first user in the room
         val userList = userMap.values.toList()
         _users.value = userList
-        _isHost.value = userList.any { it.isHost && it.username == _currentUsername.value } ||
-            (userList.firstOrNull()?.username == _currentUsername.value)
+        _isHost.value = isConfiguredHost
         _events.emit(SyncplayEvent.UserListUpdated(userList))
     }
 
@@ -384,6 +429,14 @@ class SyncplayClient {
             val isController = userEntry["controller"]?.jsonPrimitive?.booleanOrNull ?: false
             val isReady = userEntry["isReady"]?.jsonPrimitive?.booleanOrNull ?: true
 
+            if (isController || fileObj?.get("animeTitle") != null) {
+                knownHostUsername = username
+            }
+
+            val isUserHost = (username == knownHostUsername) ||
+                (isConfiguredHost && username == _currentUsername.value) ||
+                isController
+
             val user = SyncplayUser(
                 username = username,
                 room = currentRoomName,
@@ -391,7 +444,7 @@ class SyncplayClient {
                 fileDuration = fileDuration,
                 fileSize = fileSize,
                 isReady = isReady,
-                isHost = isController,
+                isHost = isUserHost,
             )
             userMap[username] = user
 
@@ -401,8 +454,7 @@ class SyncplayClient {
 
         val userList = userMap.values.toList()
         _users.value = userList
-        _isHost.value = userList.any { it.isHost && it.username == _currentUsername.value } ||
-            (userList.firstOrNull()?.username == _currentUsername.value)
+        _isHost.value = isConfiguredHost
         _events.emit(SyncplayEvent.UserListUpdated(userList))
     }
 
@@ -619,6 +671,25 @@ class SyncplayClient {
         sendRawLine(fileJson)
     }
 
+    private suspend fun recalculateUserList() {
+        val updated = userMap.mapValues { (name, user) ->
+            val userIsHost = (name == knownHostUsername) ||
+                (isConfiguredHost && name == _currentUsername.value) ||
+                user.isHost
+            user.copy(isHost = userIsHost)
+        }
+        userMap.clear()
+        userMap.putAll(updated)
+        val list = userMap.values.toList()
+        _users.value = list
+        _events.emit(SyncplayEvent.UserListUpdated(list))
+    }
+
+    fun sendChat(message: String) {
+        val escaped = message.replace("\"", "\\\"")
+        sendRawLine("""{"Chat": "$escaped"}""")
+    }
+
     fun requestSyncFromHost() {
         val myUser = _currentUsername.value ?: return
         val chatJson = """{"Chat": "SYNC_REQ:$myUser"}"""
@@ -697,6 +768,8 @@ class SyncplayClient {
         _currentRoom.value = null
         _connectionState.value = SyncplayConnectionState.Disconnected(reason)
         _isHost.value = false
+        isConfiguredHost = false
+        knownHostUsername = null
         _hostAnimeMeta.value = null
         serverIgnoringOnTheFly = 0L
         clientIgnoringOnTheFly = 0L

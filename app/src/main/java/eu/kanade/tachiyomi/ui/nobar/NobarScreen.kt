@@ -694,6 +694,7 @@ class NobarScreen : Screen() {
                                             username = joinUsername.trim(),
                                             password = joinPassword.trim().takeIf { it.isNotBlank() },
                                             isHostOnly = true,
+                                            isHost = false,
                                         )
                                         syncplayClient.connect(config)
                                     }
@@ -784,6 +785,7 @@ class NobarScreen : Screen() {
                                             username = createUsername.trim(),
                                             password = createPassword.trim().takeIf { it.isNotBlank() },
                                             isHostOnly = true,
+                                            isHost = true,
                                         )
                                         syncplayClient.connect(config)
 

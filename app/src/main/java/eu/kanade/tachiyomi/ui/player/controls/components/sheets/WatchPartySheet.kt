@@ -62,7 +62,13 @@ fun WatchPartySheet(
     initialUsername: String,
     initialRoom: String,
     initialPassword: String,
-    onConnect: (server: String, room: String, username: String, password: String?) -> Unit,
+    onConnect: (
+        server: String,
+        room: String,
+        username: String,
+        password: String?,
+        isHost: Boolean,
+    ) -> Unit,
     onDisconnect: () -> Unit,
     onToggleHostOnly: (Boolean) -> Unit,
     onDismissRequest: () -> Unit,
@@ -341,6 +347,7 @@ fun WatchPartySheet(
                                     joinRoom.trim(),
                                     joinUsername.trim(),
                                     joinPassword.trim().takeIf { it.isNotBlank() },
+                                    false,
                                 )
                             }
                         },
@@ -406,6 +413,7 @@ fun WatchPartySheet(
                                     createRoom.trim(),
                                     createUsername.trim(),
                                     createPassword.trim().takeIf { it.isNotBlank() },
+                                    true,
                                 )
                             }
                         },

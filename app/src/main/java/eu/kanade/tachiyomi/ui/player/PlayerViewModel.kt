@@ -2466,7 +2466,13 @@ class PlayerViewModel @JvmOverloads constructor(
         }
     }
 
-    fun connectSyncplay(server: String, room: String, username: String, password: String?) {
+    fun connectSyncplay(
+        server: String,
+        room: String,
+        username: String,
+        password: String?,
+        isHost: Boolean = true,
+    ) {
         viewModelScope.launchIO {
             val parts = server.split(":")
             val host = parts[0]
@@ -2483,6 +2489,7 @@ class PlayerViewModel @JvmOverloads constructor(
                 username = username,
                 password = password.takeIf { !it.isNullOrBlank() },
                 isHostOnly = isHostOnly.value,
+                isHost = isHost,
             )
             syncplayClient.connect(config)
         }

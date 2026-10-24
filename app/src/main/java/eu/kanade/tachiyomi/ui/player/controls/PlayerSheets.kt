@@ -108,7 +108,13 @@ fun PlayerSheets(
     initialSyncplayUsername: String = "",
     initialSyncplayRoom: String = "",
     initialSyncplayPassword: String = "",
-    onConnectSyncplay: (server: String, room: String, username: String, password: String?) -> Unit = { _, _, _, _ -> },
+    onConnectSyncplay: (
+        server: String,
+        room: String,
+        username: String,
+        password: String?,
+        isHost: Boolean,
+    ) -> Unit = { _, _, _, _, _ -> },
     onDisconnectSyncplay: () -> Unit = {},
     onToggleHostOnly: (Boolean) -> Unit = {},
 

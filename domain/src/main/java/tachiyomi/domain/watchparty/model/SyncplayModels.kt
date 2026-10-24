@@ -93,4 +93,5 @@ data class WatchPartyConfig(
     val username: String = "",
     val password: String? = null,
     val isHostOnly: Boolean = false,
+    val isHost: Boolean = false,
 ) : Serializable
