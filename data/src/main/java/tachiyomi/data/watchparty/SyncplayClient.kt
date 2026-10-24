@@ -527,11 +527,6 @@ class SyncplayClient {
                 _events.emit(SyncplayEvent.PlayStateChanged(state))
             }
         }
-
-        // 4. Immediately reply to server State (event-driven ping-pong)
-        if (_isConnected.value && socket?.isClosed == false) {
-            sendState(localPosition, localPaused, doSeek = false, stateChange = false)
-        }
     }
 
     private suspend fun pingLoop() {
